@@ -1,2 +1,5 @@
-# overwatch-orthophotos
-Docker-based tool to orthorectify images and upload them to the OVERWATCH geospatial repository.
+# OVERWATCH Orthorectification Tool
+
+This project provides an automated pipeline for processing drone imagery through OpenDroneMap (NodeODM) and uploading results to a CKAN datalake.
+
+
