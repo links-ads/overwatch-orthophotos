@@ -7,8 +7,8 @@ import structlog
 from argdantic import ArgField, ArgParser
 from pyodm.api import TaskStatus
 
-from odm_tools.processor import ODMProcessor
-from odm_tools.utils import setup_logging, validate_request_structure
+from odm_tools.service import ProcessingService
+from odm_tools.utils import setup_logging
 
 cli = ArgParser(name="odm-tool", description="ODM Tools - Drone imagery orthorectification CLI")
 
@@ -22,23 +22,15 @@ def process(
     ),
 ) -> None:
     setup_logging(log_level=log_level)
-    log = structlog.get_logger()
 
-    validate_request_structure(request_path)
-    log.info("Starting processing", request_path=str(request_path), dry_run=dry_run)
-
-    if dry_run:
-        log.info("Dry run completed - request structure is valid")
-        return
-
-    workflow = ODMProcessor()
     try:
-        workflow.check_node_availability()
-        asyncio.run(workflow.process_request(request_path))
-        log.info("Processing completed successfully")
-    except Exception as e:
-        log.error("Processing failed", error=str(e))
-        sys.exit(1)
+        service = ProcessingService()
+        exit_code = asyncio.run(service.process_request(request_path, dry_run))
+        sys.exit(exit_code)
+    except KeyboardInterrupt:
+        # Handle Ctrl+C during startup/teardown
+        structlog.get_logger().info("Interrupted during startup")
+        sys.exit(2)
 
 
 @cli.command()
@@ -53,25 +45,18 @@ def cleanup(
     ),
 ) -> None:
     setup_logging(log_level=log_level)
-    log = structlog.get_logger()
-    log.info("Starting cleanup", request_path=str(request_path), dry_run=dry_run, statuses=task_status)
 
-    workflow = ODMProcessor()
+    # Convert string statuses to TaskStatus enums
     statuses = [TaskStatus[s.upper()] for s in task_status] if task_status else None
+
     try:
-        workflow.check_node_availability()
-        removed_tasks = asyncio.run(
-            workflow.clear_tasks(
-                request_path,
-                statuses=statuses,
-                dry_run=dry_run,
-            )
-        )
-        log.info("Tasks removed", removed_tasks=removed_tasks)
-        log.info("Cleanup completed successfully")
-    except Exception as e:
-        log.error("Cleanup failed", error=str(e))
-        sys.exit(1)
+        service = ProcessingService()
+        exit_code, removed_tasks = asyncio.run(service.cleanup_tasks(request_path, statuses, dry_run))
+        sys.exit(exit_code)
+    except KeyboardInterrupt:
+        # Handle Ctrl+C during startup/teardown
+        structlog.get_logger().info("Interrupted during startup")
+        sys.exit(2)
 
 
 @cli.command()
@@ -86,13 +71,15 @@ def list(
 ):
     setup_logging(log_level=log_level)
     log = structlog.get_logger()
-    log.info("Listing tasks", request_path=str(request_path), statuses=task_status)
 
-    workflow = ODMProcessor()
+    # Convert string statuses to TaskStatus enums
     statuses = [TaskStatus[s.upper()] for s in task_status] if task_status else None
+
     try:
-        workflow.check_node_availability()
-        task_infos = asyncio.run(workflow.list_tasks(request_path=request_path, statuses=statuses))
+        service = ProcessingService()
+        exit_code, task_infos = asyncio.run(service.list_tasks(request_path, statuses))
+
+        # Print task information
         for info in task_infos:
             log.info(
                 f"Task {info.uuid}",
@@ -101,10 +88,16 @@ def list(
                 created_at=info.date_created,
             )
 
-    except Exception as e:
-        log.error("List failed", error=str(e))
-        sys.exit(1)
+        sys.exit(exit_code)
+    except KeyboardInterrupt:
+        # Handle Ctrl+C during startup/teardown
+        structlog.get_logger().info("Interrupted during startup")
+        sys.exit(2)
 
 
 def main():
     cli()
+
+
+if __name__ == "__main__":
+    main()
