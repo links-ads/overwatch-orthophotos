@@ -1,0 +1,45 @@
+name: overwatch
+
+services:
+  nodeodm:
+    image: opendronemap/nodeodm:3.5.5
+    container_name: nodeodm
+    ports:
+      - "3000:3000"
+    environment:
+      - ODM_DEBUG=1
+      - ODM_PARALLEL_TASKS=2
+    volumes:
+      - nodeodm_data:/var/www/data
+    deploy:
+      resources:
+        limits:
+          cpus: 8
+          memory: 32G
+        reservations:
+          cpus: 2
+          memory: 16G
+    restart: unless-stopped
+
+  odm-tools:
+    build:
+      context: .
+      dockerfile: containers/odm-tools.dockerfile
+    container_name: odm-tools
+    depends_on:
+      - nodeodm
+    volumes:
+      - ./data/images:/app/images
+      - ./data/output:/app/output
+    environment:
+      - NODEODM_HOST=nodeodm
+      - NODEODM_PORT=3000
+      - CKAN_BASE_URL=${CKAN_BASE_URL}
+      - OAUTH2_CLIENT_ID=${OAUTH2_CLIENT_ID}
+      - OAUTH2_CLIENT_SECRET=${OAUTH2_CLIENT_SECRET}
+    profiles:
+      - manual  # This prevents auto-start, requires manual launch
+    restart: "no"
+
+volumes:
+  nodeodm_data:
