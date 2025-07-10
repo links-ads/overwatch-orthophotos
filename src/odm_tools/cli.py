@@ -51,7 +51,7 @@ def cleanup(
 
     try:
         service = ProcessingService()
-        exit_code, removed_tasks = asyncio.run(service.cleanup_tasks(request_path, statuses, dry_run))
+        exit_code, _ = asyncio.run(service.cleanup_tasks(request_path, statuses, dry_run))
         sys.exit(exit_code)
     except KeyboardInterrupt:
         # Handle Ctrl+C during startup/teardown

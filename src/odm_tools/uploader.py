@@ -10,11 +10,9 @@ from pydantic_geojson import MultiPolygonModel, PolygonModel
 from odm_tools.auth import KeyCloakAuthOAuth
 from odm_tools.config import settings
 from odm_tools.models import (
-    MetadataExternalAttribute,
     MetadataINSPIRE,
-    PackageParams,
-    ResourceCreateMetadata,
-    ResourceUpdateMetadata,
+    ProcessingRequest,
+    ResourceCreateRequest,
 )
 
 log = structlog.get_logger()
@@ -45,49 +43,19 @@ class CKANUploader:
     def authorize(self) -> dict:
         return self.authenticator.get_authorization_header()
 
-    def retrieve_metadata(self, package_id: str, metadata_keys: list | None = None):
-        """
-        Retrieves metadata for a given package ID.
-
-        Args:
-            package_id (str): The ID of the package to retrieve metadata for.
-            metadata_keys (list, optional): A list of specific metadata keys to retrieve.
-                If not provided, all metadata keys will be returned.
-
-        Returns:
-            list or dict: If `metadata_keys` is provided, a list of the corresponding
-                metadata values will be returned. Otherwise, a dictionary of all
-                metadata key-value pairs will be returned.
-
-        Raises:
-            TaskException: If the metadata retrieval fails, an exception with a
-                descriptive error message will be raised.
-        """
+    def _retrieve_metadata(self, package_id: str, metadata_keys: list | None = None):
         try:
-            response = requests.get(f"{self.package_show_url}?id={package_id}", headers=self.authorize())
+            response = requests.get(self.package_show_url, params={"id": package_id}, headers=self.authorize())
             response.raise_for_status()
-
             metadata = response.json()["result"]
             if metadata_keys is not None:
                 return [metadata[k] for k in metadata_keys if k in metadata]
-
             return metadata
         except HTTPError as e:
             log.exception("HTTP error occurred", error=str(e))
             raise UploadException(e)
 
-    def get_package_id(self, request_code: str):
-        """
-        Retrieves the package ID associated with the given request code.
-        Args:
-            request_code (str): The request code used to search for the package.
-        Returns:
-            str: The ID of the package if found, None otherwise.
-        Raises:
-            HTTPError: If an HTTP error occurs during the request.
-            Exception: If any other error occurs during the request.
-        """
-
+    def _get_package_id(self, request_code: str):
         try:
             assert request_code is not None
             params = {
@@ -106,19 +74,9 @@ class CKANUploader:
         if len(response.json()["result"]["results"]) > 0:
             return response.json()["result"]["results"][0]["id"]
 
-    def get_resource_url(self, package_id: str, resource_names: list):
-        """
-        Get the resource URL based on the package ID and resource name.
-
-        Args:
-            package_id (str): The ID of the package.
-            resource_name (list): list of names to test
-
-        Returns:
-            str: The resource URL if found, None otherwise.
-        """
+    def _get_resource_url(self, package_id: str, resource_names: list):
         try:
-            response = requests.get(f"{self.package_show_url}?id={package_id}", headers=self.authorize())
+            response = requests.get(self.package_show_url, params={"id": package_id}, headers=self.authorize())
             response.raise_for_status()
 
             if response.status_code != 200:
@@ -126,10 +84,11 @@ class CKANUploader:
 
             resource_list = response.json()["result"]["resources"]
             log.info(f"Found {len(resource_list)} resources for package {package_id}")
-            log.info(f"Resource list: {resource_list}")
-            if len(resource_list) == 0:
-                log.info(f"No resources found for package {package_id}")
+            log.debug(f"Resource list: {resource_list}")
+            if not resource_list:
+                log.warning(f"No resources found for package {package_id}")
                 return None
+
             resource_urls = []
             for res_name in resource_names:
                 resource_url_list = [res["url"] for res in resource_list if res["name"].startswith(res_name)]
@@ -147,7 +106,7 @@ class CKANUploader:
             log.exception("Unexpected error occurred", error=str(e))
             raise UploadException(e)
 
-    def create_resource_name(
+    def _create_resource_name(
         self,
         datatype_id: int | str,
         request_code: str,
@@ -167,8 +126,7 @@ class CKANUploader:
         Returns:
             str: name
         """
-        if date:
-            date = datetime.fromisoformat(date).date().isoformat()
+        date = datetime.fromisoformat(date).date().isoformat()
         infos = [date, title, str(datatype_id), request_code]
         name = " ".join(filter(None, infos))
         if underscore:
@@ -176,98 +134,56 @@ class CKANUploader:
             name = name.translate(table)
         return name
 
-    def create_metadata(
+    def _create_metadata(
         self,
-        title: str,
-        owner: str,
-        resolution: int,
-        metadata_params: PackageParams,
+        request_code: str,
+        package_title: str,
+        package_owner: str,
+        package_keywords: list[str],
+        package_topic: str,
+        image_resolution: int,
         request_geometry: PolygonModel | MultiPolygonModel,
-        start_date: str,
-        end_date: str,
+        start_date: datetime,
+        end_date: datetime,
         acquisition_dates: dict | None = None,
-        request_code: str = "",
-        request_metadata: dict | None = None,
-        destinatary_organization: str = "",
+        additional_data: dict | None = None,
     ) -> MetadataINSPIRE:
-        """
-        Create a MetadataINSPIRE object from the parameters.
-
-        Args:
-            title: title of the resource
-            owner: owner of the resource
-            resolution: resolution of the resource
-            metadata_params: PackageParams object with additional metadata
-            request_geometry: geometry of the request
-            start_date: start date of the request (isoformat)
-            end_date: end date of the request (isoformat)
-            acquisition_dates: dictionary of acquisition dates for the resource
-            request_code: code of the request
-            request_metadata: additional metadata for the resource
-            destinatary_organization: destinatary organization for the resource
-
-        Returns:
-            MetadataINSPIRE: the created metadata object
-        """
         try:
             metadata = MetadataINSPIRE(
-                owner_org=owner,
+                owner_org=package_owner,
                 responsable_organization_name=self.cfg.organization_name,
                 responsable_organization_email=self.cfg.organization_email,
                 point_of_contact_name=self.cfg.organization_name,
                 point_of_contact_email=self.cfg.organization_email,
-            )
+            )  # type: ignore
 
-            custom_metadata = {}
-            if request_metadata is not None:
-                metadata = metadata.model_dump(by_alias=True)
-                for k, v in request_metadata.items():
-                    if k in metadata:
-                        metadata[k] = v
-                    custom_metadata[k] = v
-                metadata = MetadataINSPIRE(**metadata)
-
-            metadata.title = title
+            metadata.title = package_title
             metadata.name = str(uuid.uuid4())
-            metadata.notes = metadata_params.notes
-            metadata.keyword = metadata_params.keyword
-            metadata.classification_category = metadata_params.topic_category
+            metadata.notes = f"Drone acquisitions for request {request_code}"
+            metadata.keyword = ", ".join(package_keywords)
+            metadata.classification_category = package_topic
             metadata.spatial = request_geometry
             current_date = datetime.now(tz=UTC)
             metadata.tref_date = current_date.isoformat().split("+")[0]
             metadata.tref_date_creation = current_date.isoformat().split("+")[0]
             metadata.tref_date_publication = current_date.isoformat().split("+")[0]
             metadata.tref_date_revision = current_date.isoformat().split("+")[0]
-            metadata.data_temporal_extent_begin_date = start_date
-            metadata.data_temporal_extent_end_date = end_date
-            metadata.quality_and_validity_spatial_resolution_latitude = str(resolution)
-            metadata.quality_and_validity_spatial_resolution_longitude = str(resolution)
+            metadata.data_temporal_extent_begin_date = start_date.isoformat()
+            metadata.data_temporal_extent_end_date = end_date.isoformat()
+            metadata.quality_and_validity_spatial_resolution_latitude = str(image_resolution)
+            metadata.quality_and_validity_spatial_resolution_longitude = str(image_resolution)
+            metadata.quality_and_validity_spatial_resolution_measureunit = "cm"
             metadata.request_code = request_code
-            metadata.destinatary_organization = destinatary_organization
-            if acquisition_dates is not None:
-                external_attributes = MetadataExternalAttribute(
-                    acquisition_dates=acquisition_dates,
-                    **custom_metadata,
-                )
-                metadata.external_attributes = external_attributes
-            log.info(f"Metadata: {metadata.model_dump(by_alias=True)}")
+            metadata.destinatary_organization = ""
+            if additional_data:
+                metadata.external_attributes = additional_data
+            log.debug("Metadata prepared", metadata=metadata.model_dump(by_alias=True))
             return metadata
         except Exception as e:
             log.exception("Failed to create metadata", error=str(e))
             raise UploadException(e)
 
-    def upload_metadata(self, metadata: MetadataINSPIRE) -> None:
-        """Upload the Metadata INSPIRE
-
-        Args:
-            metadata (MetadataINSPIRE): input metadata
-
-        Raises:
-            te: Task Exception
-
-        Returns:
-            None: None
-        """
+    def _upload_metadata(self, metadata: MetadataINSPIRE) -> str:
         log.info("Uploading metadata to datalake...")
         try:
             log.info(f"Loading metadata {metadata.model_dump(by_alias=True)}")
@@ -276,9 +192,8 @@ class CKANUploader:
                 json=metadata.model_dump(by_alias=True),
                 headers=self.authorize(),
             )
-
-            log.info(f"Response: {response.json()}")
             response.raise_for_status()
+            log.debug("Metadata uploaded", response=response.json())
             return response.json()["result"]["id"]
         except HTTPError as e:
             log.exception("An HTTP error occurred", error=e)
@@ -287,41 +202,27 @@ class CKANUploader:
             log.exception("An unexpected error occurred", error=e)
             raise UploadException(e)
 
-    def upload_resource(
+    def _upload_resource(
         self,
         package_id: str,
-        resource_path: str,
-        datatype: int | str,
-        time_start: str,
-        time_end: str,
-        title: str,
+        resource_path: Path,
+        resource_name: str,
+        datatype_id: int,
+        time_start: datetime,
+        time_end: datetime,
     ) -> str:
-        """Upload resource to datalake
-
-        Args:
-            package_id (str): package id
-            resource_path (str): path of the file to upload
-            datatype (int|str): datatype id
-            time_start (datetime): start
-            time_end (datetime): end
-            title (str): title
-
-        Raises:
-            Exception: general exceptions
-
-        """
         try:
-            extension = Path(resource_path).suffix.lstrip(".")
-            resource_metadata = ResourceCreateMetadata(
+            extension = resource_path.suffix.lstrip(".")
+            resource_metadata = ResourceCreateRequest(
                 package_id=package_id,
-                datatype_resource=datatype,
-                file_date_start=time_start,
-                file_date_end=time_end,
+                datatype_resource=datatype_id,
+                file_date_start=time_start.date(),
+                file_date_end=time_end.date(),
                 format=extension,
-                name=title,
+                name=resource_name,
             )
-            with open(f"{resource_path}", "rb") as file:
-                log.info(f"Uploading resource {resource_metadata.model_dump(by_alias=True)} to datalake...")
+            with open(resource_path, "rb") as file:
+                log.info("Uploading resource", resource=resource_path.name)
                 response = requests.post(
                     self.resource_create_url,
                     data=resource_metadata.model_dump(by_alias=True),
@@ -334,54 +235,52 @@ class CKANUploader:
             log.exception("An unexpected error occurred", error=str(e))
             raise UploadException(e)
 
-    def update_resource(
+    def upload_results(
         self,
-        package_id: str,
-        resource_id: str,
-        resource_path: str,
-        datatype: int | str,
-        time_start: str,
-        time_end: str,
-        title: str,
-    ) -> None:
-        """Update existing resource in datalake
+        request: ProcessingRequest,
+        datatype_id: int,
+        results: dict[str, Path],
+        package_title: str | None = None,
+    ) -> list[dict[str, str]]:
+        if not results:
+            raise UploadException("Request failed: no data to upload to datalake")
 
-        Args:
-            package_id (str): package id
-            resource_id (str): id of the resource to update
-            resource_path (str): path of the file to upload
-            datatype (int|str): datatype id
-            time_start (datetime): start
-            time_end (datetime): end
-            title (str): title
+        # Creating package title and resource name if not provided
+        if not package_title:
+            log.info("Generating package title...")
+            package_title = f"Drone mission - situation: {request.situation_id}, request: {request.request_id}"
 
-        Raises:
-            Exception: general exceptions
+        log.info(f"Using package with name {package_title}")
+        datasets = []
 
-        Returns:
-            None: None
-        """
-        try:
-            extension = Path(resource_path).suffix.lstrip(".")
-            resource_metadata = ResourceUpdateMetadata(
-                id=resource_id,
-                package_id=package_id,
-                datatype_resource=datatype,
-                file_date_start=time_start,
-                file_date_end=time_end,
-                format=extension,
-                name=title,
+        for resource_name, resource_path in results.items():
+            # Creating new package metadata
+            dataset_metadata = self._create_metadata(
+                package_title=package_title,
+                package_owner=self.cfg.organization_name,
+                package_keywords=self.cfg.data.keywords,
+                package_topic=self.cfg.data.topic,
+                image_resolution=self.cfg.data.resolution,
+                request_geometry=request.feature.geometry,  # type: ignore
+                start_date=request.start,
+                end_date=request.end,
+                request_code=request.request_id,
             )
-            with open(f"{resource_path}", "rb") as file:
-                log.info(f"Updating resource {resource_metadata.model_dump(by_alias=True)} in datalake...")
-                response = requests.post(
-                    self.resource_update_url,  # Change this to your update URL
-                    data=resource_metadata.model_dump(by_alias=True),
-                    headers=self.authorize(),
-                    files=[("upload", file)],
+            # uploading package
+            log.info(f"Uploading metadata for package {package_title}...")
+            package_id = self._upload_metadata(dataset_metadata)
+
+            log.info(f"Updating resource to package {package_id}...")
+            url = [
+                self._upload_resource(
+                    package_id=package_id,
+                    resource_path=resource_path,
+                    resource_name=resource_path.name,
+                    datatype_id=datatype_id,
+                    time_start=request.start,
+                    time_end=request.end,
                 )
-                response.raise_for_status()
-                return response.json()["result"]["url"]
-        except Exception as e:
-            log.exception("An unexpected error occurred", error=str(e))
-            raise UploadException(e)
+            ]
+            log.info("Resource uploaded", url=url)
+            datasets.append(dict(dataset_id=package_id, url=url))
+        return datasets

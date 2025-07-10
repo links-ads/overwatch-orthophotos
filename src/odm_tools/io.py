@@ -47,16 +47,16 @@ class FileManager:
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
-    def find_result_files(self, result_path: Path) -> list[Path]:
-        result_files = []
+    def find_result_files(self, result_path: Path) -> dict[str, Path]:
+        result_files = {}
         if result_path and result_path.exists():
             ortho_path = result_path / "odm_orthophoto" / "odm_orthophoto.tif"
-            report_path = result_path / "odm_report" / "odm_report.pdf"
+            # report_path = result_path / "odm_report" / "odm_report.pdf"
 
             if ortho_path.exists():
-                result_files.append(ortho_path)
-            if report_path.exists():
-                result_files.append(report_path)
+                result_files[ortho_path.stem] = ortho_path
+            # if report_path.exists():
+            # result_files[report_path](report_path)
 
         return result_files
 
