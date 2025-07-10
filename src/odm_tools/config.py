@@ -13,12 +13,19 @@ class OAuthSettings(BaseModel):
     scope: str = "openid"
 
 
+class DatasetSettings(BaseModel):
+    resolution: int = 10  # cm/pixel
+    topic: str = "imageryBaseMapsEarthCover"
+    keywords: list[str] = ["Delineation Map", "Wildfire"]
+
+
 class CKANSettings(BaseModel):
     url: str
     app_project: str
     organization_email: str
     organization_name: str
     auth: OAuthSettings
+    data: DatasetSettings = DatasetSettings()
 
 
 class RabbitMQSettings(BaseModel):
@@ -46,6 +53,7 @@ class NodeODMSettings(BaseModel):
     max_concurrent_tasks: int = 2
     poll_interval: int = 30
     poll_retries: int = 5
+    cancel_on_shutdown: bool = False
 
     @property
     def url(self) -> str:

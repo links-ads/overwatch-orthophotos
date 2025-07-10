@@ -19,7 +19,7 @@ class GracefulShutdown:
         self.processor = processor
         self.shutdown_requested = False
 
-    def request_shutdown(self, signum, frame):
+    def request_shutdown(self, signum, _):
         """Signal handler for graceful shutdown."""
         if self.shutdown_requested:
             log.warning("Force shutdown requested")
@@ -172,4 +172,3 @@ async def list_tasks_with_shutdown(
     """Convenience function for listing tasks."""
     service = ProcessingService()
     return await service.list_tasks(request_path, statuses)
-

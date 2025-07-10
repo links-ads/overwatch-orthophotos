@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
@@ -37,6 +37,7 @@ class ProcessingRequest(BaseModel):
     start: datetime
     end: datetime
     request_id: str = Field(alias="requestId")
+    situation_id: str = Field(alias="situationId")
     datatype_ids: list[int] = Field(alias="datatypeIds")
     feature: FeatureModel
     path: Path
@@ -123,29 +124,33 @@ class StatusUpdate(BaseModel):
     message: str
 
 
-class MetadataExternalAttribute(BaseModel, extra="allow"):
-    acquisition_dates: dict = {}
+# https://docs.ckan.org/en/2.10/api/#ckan.logic.action.create.resource_create
+class ResourceCreateRequest(BaseModel):
+    package_id: str
+    datatype_resource: int
+    file_date_start: date
+    file_date_end: date
+    format: str
+    name: str
 
 
 class MetadataINSPIRE(BaseModel):
-    title: str = Field("", editable=True)
+    model_config = ConfigDict(validate_by_name=True)
+    title: str = ""
     private: bool = True
-    notes: str = Field("", editable=True)
+    notes: str = ""
     name: str = ""
     ident_resource_type: str = Field("dataset", alias="identification_ResourceType")
     owner_org: str = ""
-    ident_coupled_resource: str = Field("", alias="identification_CoupledResource", editable=True)
+    ident_coupled_resource: str = Field("", alias="identification_CoupledResource")
     ident_res_language: str = Field("eng", alias="identification_ResourceLanguage")
     classification_category: str = Field("imageryBaseMapsEarthCover", alias="classification_TopicCategory")
     classification_spatial_dst: str = Field("", alias="classification_SpatialDataServiceType")
-    keyword: str = Field("", alias="keyword_KeywordValue", editable=True)
+    keyword: str = Field("", alias="keyword_KeywordValue")
     keyword_vocabulary: str = Field("ontology", alias="keyword_OriginatingControlledVocabulary")
     data_temporal_extent_begin_date: str = ""
     data_temporal_extent_end_date: str = ""
-    tref_date_publication: str = Field(
-        "",
-        alias="temporalReference_dateOfPublication",
-    )
+    tref_date_publication: str = Field("", alias="temporalReference_dateOfPublication")
     tref_date_revision: str = Field("", alias="temporalReference_dateOfLastRevision")
     tref_date_creation: str = Field("", alias="temporalReference_dateOfCreation")
     tref_date: str = Field("", alias="temporalReference_date")
@@ -172,11 +177,4 @@ class MetadataINSPIRE(BaseModel):
     spatial: PolygonModel | MultiPolygonModel | None = None
     request_code: str = ""
     destinatary_organization: str = ""
-    external_attributes: MetadataExternalAttribute = MetadataExternalAttribute()
-
-    @classmethod
-    def __get_pydantic_json_schema__(cls, field_schema, field):
-        if field is not None:
-            if "editable" in field_schema.keys() and field_schema["editable"]:
-                for k, v in field.field_info.extra.items():
-                    field_schema[k] = v
+    external_attributes: dict = {}

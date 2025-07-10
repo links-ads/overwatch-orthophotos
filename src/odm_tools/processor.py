@@ -11,6 +11,7 @@ from odm_tools.config import settings
 from odm_tools.io import FileManager
 from odm_tools.models import DataType, ProcessingOptions, ProcessingRequest, TaskTracker
 from odm_tools.notifier import AsyncRabbitMQNotifier
+from odm_tools.uploader import CKANUploader
 
 log = structlog.get_logger()
 
@@ -38,11 +39,12 @@ class ODMProcessor:
             port=settings.nodeodm.port,
             token=settings.nodeodm.token,
         )
+        self._cancel_tasks_on_shutdown = settings.nodeodm.cancel_on_shutdown
         self._shutdown_event = asyncio.Event()
         self._running_tasks: set[asyncio.Task] = set()
         self.active_tasks: dict[str, TaskTracker] = {}
         self.notifier = AsyncRabbitMQNotifier()
-        # self.uploader = CKANUploader()
+        self.uploader = CKANUploader()
 
     async def process_request(
         self,
@@ -184,13 +186,13 @@ class ODMProcessor:
             )
             raise ProcessingError("Missing result files")
         try:
-            assert all(f.exists() for f in result_files)
-            # TODO: implement upload
-            # upload_result = self.uploader.upload_processing_results(
-            #     request, task_tracker, result_files
-            # )
-            upload_result = {"dataset_id": "none"}
-            return upload_result
+            assert all(p.exists() for p in result_files.values())
+            datasets = self.uploader.upload_results(
+                request=request,
+                datatype_id=task_tracker.datatype_id,
+                results=result_files,
+            )
+            return datasets
         except Exception as e:
             log.error("CKAN upload failed", task_id=task.uuid, error=str(e))
             await self.notifier.send_task_error(
@@ -226,9 +228,12 @@ class ODMProcessor:
             pass
 
     async def _cancel_odm_tasks(self, tasks: list[Task]):
-        """Cancel ODM tasks on the server."""
-        log.info("Cancelling ODM tasks", task_count=len(tasks))
+        if self._cancel_tasks_on_shutdown:
+            log.warning("Letting tasks run", task_count=len(tasks))
+            log.warning("Update the YAML config to cancel tasks on shutdown")
+            return
 
+        log.info("Cancelling ODM tasks", task_count=len(tasks))
         for task in tasks:
             try:
                 task_info = await self._get_task_info_async(task)
@@ -389,17 +394,17 @@ class ODMProcessor:
                 task_tracker = self.active_tasks[task.uuid]
 
                 if task_info.status == TaskStatus.COMPLETED:
-                    upload_result = await self._process_results(
+                    upload_results = await self._process_results(
                         request=request,
                         task=task,
                         task_info=task_info,
                     )
-                    if upload_result:
+                    if upload_results:
                         completed_tasks += 1
                         log.info(
                             "Results uploaded",
                             task_id=task.uuid,
-                            dataset_id=upload_result["dataset_id"],
+                            datasets=len(upload_results),
                         )
                         await self.notifier.send_task_end(
                             request_id=request.request_id,
