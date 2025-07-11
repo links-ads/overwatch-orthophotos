@@ -200,3 +200,4 @@ config.yaml
 *.tif
 # uv files
 uv.lock
+data/
