@@ -1,8 +1,8 @@
 import json
-from datetime import date, datetime
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -62,43 +62,6 @@ class ODMTask(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
 
 
-class ProcessingOptions(BaseModel):
-    quality: str = "medium"  # high/medium/low shortcut
-    dsm: bool = True
-    dtm: bool = False
-    orthophoto: bool = True
-    orthophoto_resolution: float | None = None  # cm/pixel
-    dem_resolution: float | None = None  # cm/pixel
-    texture_size: int = 4096
-    ignore_gsd: bool = False
-
-    def to_pyodm_options(self) -> dict[str, Any]:
-        """Convert to PyODM options dictionary."""
-        options = {}
-        # quality shortcuts
-        if self.quality == "high":
-            options["orthophoto-resolution"] = 2
-        elif self.quality == "low":
-            options["orthophoto-resolution"] = 8
-        # override with explicit resolution if provided
-        if self.orthophoto_resolution:
-            options["orthophoto-resolution"] = self.orthophoto_resolution
-        if self.dem_resolution:
-            options["dem-resolution"] = self.dem_resolution
-        # output types
-        if self.dsm:
-            options["dsm"] = True
-        if self.dtm:
-            options["dtm"] = True
-        if not self.orthophoto:
-            options["skip-orthophoto"] = True
-        # Advanced options
-        if self.ignore_gsd:
-            options["ignore-gsd"] = True
-        # Texture size is handled differently in ODM, not included in options dict
-        return options
-
-
 class ODMServerInfo(BaseModel):
     version: str
     task_queue_count: int = 0
@@ -128,8 +91,8 @@ class StatusUpdate(BaseModel):
 class ResourceCreateRequest(BaseModel):
     package_id: str
     datatype_resource: int
-    file_date_start: date
-    file_date_end: date
+    file_date_start: datetime
+    file_date_end: datetime
     format: str
     name: str
 
@@ -160,7 +123,7 @@ class MetadataINSPIRE(BaseModel):
     quality_and_validity_spatial_resolution_scale: str = "0"
     quality_and_validity_spatial_resolution_measureunit: str = "m"
     conformity_specification_title: str = "COMMISSION REGULATION (EU) No 1089/2010 of 23 November 2010 implementing Directive 2007/2/EC of the European Parliament and of the Council as regards interoperability of spatial data sets and services"
-    conformity_specification_dateType: str = "publication"
+    conformity_specification_date_type: str = Field("publication", alias="conformity_specification_dateType")
     conformity_specification_date: str = "2010-12-08T00:00:00"
     conformity_degree: bool = True
     constraints_conditions_for_access_and_use: str = "Creative Commons CC BY-SA 3.0 IGO licence"
