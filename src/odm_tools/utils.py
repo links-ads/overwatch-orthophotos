@@ -22,11 +22,7 @@ def setup_logging(
     Returns:
         Configured root logger
     """
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    root_logger.setLevel(log_level.upper())
-    handler = logging.StreamHandler(sys.stdout)
-    root_logger.addHandler(handler)
+    logging.basicConfig(level=log_level.upper())
     # suppress noisy third-party loggers
     for logger in suppress:
         logging.getLogger(logger).setLevel(logging.WARNING)

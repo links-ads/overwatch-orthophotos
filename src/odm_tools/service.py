@@ -6,7 +6,7 @@ from pathlib import Path
 import structlog
 from pyodm.api import TaskStatus
 
-from odm_tools.processor import ODMProcessor, ProcessingCancelled
+from odm_tools.processor import ODMProcessor, ProcessingCancelledError
 from odm_tools.utils import validate_request_structure
 
 log = structlog.get_logger()
@@ -68,7 +68,7 @@ class ProcessingService:
             log.info("Processing completed successfully")
             return 0
 
-        except ProcessingCancelled:
+        except ProcessingCancelledError:
             log.info("Processing was cancelled by user")
             return 2
         except KeyboardInterrupt:
@@ -107,7 +107,7 @@ class ProcessingService:
             log.info("Cleanup completed successfully")
             return 0, removed_tasks
 
-        except ProcessingCancelled:
+        except ProcessingCancelledError:
             log.info("Cleanup was cancelled by user")
             return 2, []
         except KeyboardInterrupt:
@@ -140,7 +140,7 @@ class ProcessingService:
 
             return 0, task_infos
 
-        except ProcessingCancelled:
+        except ProcessingCancelledError:
             log.info("Task listing was cancelled by user")
             return 2, []
         except KeyboardInterrupt:

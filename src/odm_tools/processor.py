@@ -9,7 +9,7 @@ from pyodm.exceptions import NodeConnectionError, NodeResponseError
 
 from odm_tools.config import settings
 from odm_tools.io import FileManager
-from odm_tools.models import DataType, ProcessingOptions, ProcessingRequest, TaskTracker
+from odm_tools.models import DataType, ProcessingRequest, TaskTracker
 from odm_tools.notifier import AsyncRabbitMQNotifier
 from odm_tools.uploader import CKANUploader
 
@@ -22,7 +22,7 @@ class ProcessingError(Exception):
     """
 
 
-class ProcessingCancelled(Exception):
+class ProcessingCancelledError(Exception):
     """
     Exception raised when processing is cancelled.
     """
@@ -39,22 +39,13 @@ class ODMProcessor:
             port=settings.nodeodm.port,
             token=settings.nodeodm.token,
         )
+        self.odm_options = settings.nodeodm.options
         self._cancel_tasks_on_shutdown = settings.nodeodm.cancel_on_shutdown
         self._shutdown_event = asyncio.Event()
         self._running_tasks: set[asyncio.Task] = set()
         self.active_tasks: dict[str, TaskTracker] = {}
         self.notifier = AsyncRabbitMQNotifier()
         self.uploader = CKANUploader()
-
-    async def process_request(
-        self,
-        request_path: Path,
-        quality: str = "medium",
-        dsm: bool = True,
-        dtm: bool = False,
-    ) -> None:
-        options = ProcessingOptions(quality=quality, dsm=dsm, dtm=dtm)
-        await self.process_request_with_options(request_path, options)
 
     def check_node_availability(self) -> None:
         try:
@@ -106,7 +97,7 @@ class ODMProcessor:
             existing_tasks[task_info.name] = task
         return existing_tasks
 
-    async def _create_tasks(self, datatype_groups: list[tuple], request, options) -> list[Task]:
+    async def _create_tasks(self, datatype_groups: list[tuple], request: ProcessingRequest) -> list[Task]:
         odm_tasks = []
         # First, retrieve existing tasks so that we do not restart an existing one
         try:
@@ -119,7 +110,7 @@ class ODMProcessor:
             # Check for shutdown during task creation
             if self._shutdown_event.is_set():
                 log.info("Shutdown requested during task creation")
-                raise ProcessingCancelled("Task creation cancelled")
+                raise ProcessingCancelledError("Task creation cancelled")
 
             task_name = f"{request.request_id}_{DataType(datatype_id).name}"
             log.info("Processing task", datatype_id=datatype_id, image_count=len(images), task_name=task_name)
@@ -142,7 +133,7 @@ class ODMProcessor:
                 image_paths = [str(img) for img in images]
                 task = await self._create_task_async(
                     files=image_paths,
-                    options=options.to_pyodm_options(),
+                    options=self.odm_options.to_pyodm_options(),
                     name=task_name,
                 )
                 task_tracker = TaskTracker(
@@ -164,7 +155,7 @@ class ODMProcessor:
         return odm_tasks
 
     async def _process_results(self, request: ProcessingRequest, task: Task, task_info: TaskInfo):
-        file_manager = FileManager(request.path)
+        file_manager = FileManager(request.path.parent)  # request path points to the json
         task_tracker = self.active_tasks[task_info.uuid]
         # Create output directory
         output_dir = file_manager.get_output_directory(task_tracker.datatype_id)
@@ -177,7 +168,7 @@ class ODMProcessor:
         log.info("Task results downloaded", task_id=task.uuid, result_path=result_path)
 
         # Find result files for upload
-        result_files = file_manager.find_result_files(result_path)
+        result_files = file_manager.find_result_files(result_path, request=request)
         if not result_files:
             log.error(
                 "Missing result files",
@@ -222,7 +213,7 @@ class ODMProcessor:
             # Wait for either timeout or shutdown event
             await asyncio.wait_for(self._shutdown_event.wait(), timeout=duration)
             # If we get here, shutdown was requested
-            raise ProcessingCancelled("Shutdown requested during sleep")
+            raise ProcessingCancelledError("Shutdown requested during sleep")
         except TimeoutError:
             # Normal timeout, continue
             pass
@@ -262,13 +253,13 @@ class ODMProcessor:
             except Exception as e:
                 log.error("Error during task cancellation", task_id=task.uuid, error=str(e))
 
-    async def process_request_with_options(self, request_path: Path, options: ProcessingOptions) -> None:
+    async def process_request(self, request_path: Path) -> None:
         request = self._load_request_metadata(request_path)
         log.info(
             "Processing request",
             request_id=request.request_id,
             datatype_ids=request.datatype_ids,
-            options=options.model_dump(),
+            options=self.odm_options.model_dump(),
         )
 
         # Find datatype directories and validate images
@@ -276,7 +267,7 @@ class ODMProcessor:
             try:
                 file_manager = FileManager(request_path=request_path)
                 datatype_groups = file_manager.validate_datatype_groups(request.datatype_ids)
-                odm_tasks = await self._create_tasks(datatype_groups=datatype_groups, request=request, options=options)
+                odm_tasks = await self._create_tasks(datatype_groups=datatype_groups, request=request)
 
                 if not odm_tasks:
                     raise ProcessingError("No tasks were created")
@@ -286,7 +277,7 @@ class ODMProcessor:
                 completed_tasks, failed_tasks = await self.process_completed_tasks(odm_tasks, request)
                 log.info("Monitoring completed", completed=completed_tasks, failed=failed_tasks)
 
-            except ProcessingCancelled:
+            except ProcessingCancelledError:
                 log.info("Processing cancelled, cleaning up...")
                 # Cancel any tasks that were created
                 if "odm_tasks" in locals():
@@ -310,14 +301,14 @@ class ODMProcessor:
             if self._shutdown_event.is_set():
                 log.info("Shutdown requested during monitoring")
                 await self._cancel_odm_tasks(tasks)
-                raise ProcessingCancelled("Monitoring cancelled by user")
+                raise ProcessingCancelledError("Monitoring cancelled by user")
 
             for task in tasks:
                 # Check for shutdown before processing each task
                 if self._shutdown_event.is_set():
                     log.info("Shutdown requested during task monitoring")
                     await self._cancel_odm_tasks(tasks)
-                    raise ProcessingCancelled("Task monitoring cancelled by user")
+                    raise ProcessingCancelledError("Task monitoring cancelled by user")
 
                 try:
                     task_info = await self._get_task_info_async(task)
@@ -374,7 +365,7 @@ class ODMProcessor:
             # Use cancellable sleep instead of regular sleep
             try:
                 await self._cancellable_sleep(settings.nodeodm.poll_interval)
-            except ProcessingCancelled:
+            except ProcessingCancelledError:
                 await self._cancel_odm_tasks(tasks)
                 raise
 
@@ -387,7 +378,7 @@ class ODMProcessor:
             # Check for shutdown before processing each completed task
             if self._shutdown_event.is_set():
                 log.info("Shutdown requested during completed task processing")
-                raise ProcessingCancelled("Completed task processing cancelled")
+                raise ProcessingCancelledError("Completed task processing cancelled")
 
             try:
                 task_info = await self._get_task_info_async(task)
