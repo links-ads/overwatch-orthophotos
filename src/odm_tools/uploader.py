@@ -1,13 +1,12 @@
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.error import HTTPError
 
 import requests
 import structlog
 from pydantic_geojson import MultiPolygonModel, PolygonModel
 
-from odm_tools.auth import KeyCloakAuthOAuth
+from odm_tools.auth import KeyCloakAuthenticator
 from odm_tools.config import settings
 from odm_tools.models import (
     MetadataINSPIRE,
@@ -18,7 +17,7 @@ from odm_tools.models import (
 log = structlog.get_logger()
 
 
-class UploadException(Exception):
+class UploadError(Exception):
     """
     Base uploader exception class.
     """
@@ -38,7 +37,7 @@ class CKANUploader:
         self.package_show_url = f"{cfg.url}/api/action/package_show"
         self.package_delete_url = f"{cfg.url}/api/action/package_delete"
         self.package_patch_url = f"{cfg.url}/api/action/package_patch"
-        self.authenticator = KeyCloakAuthOAuth()
+        self.authenticator = KeyCloakAuthenticator()
 
     def authorize(self) -> dict:
         return self.authenticator.get_authorization_header()
@@ -51,9 +50,9 @@ class CKANUploader:
             if metadata_keys is not None:
                 return [metadata[k] for k in metadata_keys if k in metadata]
             return metadata
-        except HTTPError as e:
+        except requests.HTTPError as e:
             log.exception("HTTP error occurred", error=str(e))
-            raise UploadException(e)
+            raise UploadError(e)
 
     def _get_package_id(self, request_code: str):
         try:
@@ -64,12 +63,12 @@ class CKANUploader:
             }
             response = requests.get(self.package_search_url, params=params, headers=self.authorize())
             response.raise_for_status()
-        except HTTPError as e:
+        except requests.HTTPError as e:
             log.exception("HTTP error occurred", error=str(e))
-            raise UploadException(e)
+            raise UploadError(e)
         except Exception as e:
             log.exception("Unexpected error occurred", error=str(e))
-            raise UploadException(e)
+            raise UploadError(e)
 
         if len(response.json()["result"]["results"]) > 0:
             return response.json()["result"]["results"][0]["id"]
@@ -80,7 +79,7 @@ class CKANUploader:
             response.raise_for_status()
 
             if response.status_code != 200:
-                UploadException(f"Failed to retrieve resource URL for package {package_id}")
+                UploadError(f"Failed to retrieve resource URL for package {package_id}")
 
             resource_list = response.json()["result"]["resources"]
             log.info(f"Found {len(resource_list)} resources for package {package_id}")
@@ -99,12 +98,12 @@ class CKANUploader:
                 return None
             return resource_urls[0]
 
-        except HTTPError as e:
+        except requests.HTTPError as e:
             log.exception("HTTP error occurred", error=str(e))
-            raise UploadException(e)
+            raise UploadError(e)
         except Exception as e:
             log.exception("Unexpected error occurred", error=str(e))
-            raise UploadException(e)
+            raise UploadError(e)
 
     def _create_resource_name(
         self,
@@ -145,7 +144,6 @@ class CKANUploader:
         request_geometry: PolygonModel | MultiPolygonModel,
         start_date: datetime,
         end_date: datetime,
-        acquisition_dates: dict | None = None,
         additional_data: dict | None = None,
     ) -> MetadataINSPIRE:
         try:
@@ -181,12 +179,11 @@ class CKANUploader:
             return metadata
         except Exception as e:
             log.exception("Failed to create metadata", error=str(e))
-            raise UploadException(e)
+            raise UploadError(e)
 
     def _upload_metadata(self, metadata: MetadataINSPIRE) -> str:
         log.info("Uploading metadata to datalake...")
         try:
-            log.info(f"Loading metadata {metadata.model_dump(by_alias=True)}")
             response = requests.post(
                 self.package_url,
                 json=metadata.model_dump(by_alias=True),
@@ -195,12 +192,12 @@ class CKANUploader:
             response.raise_for_status()
             log.debug("Metadata uploaded", response=response.json())
             return response.json()["result"]["id"]
-        except HTTPError as e:
-            log.exception("An HTTP error occurred", error=e)
-            raise UploadException(e)
+        except requests.HTTPError as e:
+            log.exception("An HTTP error occurred", error=response.json())
+            raise UploadError(e)
         except Exception as e:
             log.exception("An unexpected error occurred", error=e)
-            raise UploadException(e)
+            raise UploadError(e)
 
     def _upload_resource(
         self,
@@ -216,24 +213,29 @@ class CKANUploader:
             resource_metadata = ResourceCreateRequest(
                 package_id=package_id,
                 datatype_resource=datatype_id,
-                file_date_start=time_start.date(),
-                file_date_end=time_end.date(),
+                file_date_start=time_start,
+                file_date_end=time_end,
                 format=extension,
                 name=resource_name,
             )
             with open(resource_path, "rb") as file:
+                data = resource_metadata.model_dump(mode="json", by_alias=True)
                 log.info("Uploading resource", resource=resource_path.name)
+                log.debug("Metadata", data=data)
                 response = requests.post(
                     self.resource_create_url,
-                    data=resource_metadata.model_dump(by_alias=True),
+                    data=data,
                     headers=self.authorize(),
                     files=[("upload", file)],
                 )
                 response.raise_for_status()
                 return response.json()["result"]["url"]
+        except requests.HTTPError as e:
+            log.exception("An HTTP error occurred", error=response.json())
+            raise UploadError(e)
         except Exception as e:
             log.exception("An unexpected error occurred", error=str(e))
-            raise UploadException(e)
+            raise UploadError(e)
 
     def upload_results(
         self,
@@ -243,7 +245,7 @@ class CKANUploader:
         package_title: str | None = None,
     ) -> list[dict[str, str]]:
         if not results:
-            raise UploadException("Request failed: no data to upload to datalake")
+            raise UploadError("Request failed: no data to upload to datalake")
 
         # Creating package title and resource name if not provided
         if not package_title:
@@ -257,7 +259,7 @@ class CKANUploader:
             # Creating new package metadata
             dataset_metadata = self._create_metadata(
                 package_title=package_title,
-                package_owner=self.cfg.organization_name,
+                package_owner=self.cfg.owner_org,
                 package_keywords=self.cfg.data.keywords,
                 package_topic=self.cfg.data.topic,
                 image_resolution=self.cfg.data.resolution,

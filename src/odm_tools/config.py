@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
 
@@ -21,7 +23,7 @@ class DatasetSettings(BaseModel):
 
 class CKANSettings(BaseModel):
     url: str
-    app_project: str
+    owner_org: str
     organization_email: str
     organization_name: str
     auth: OAuthSettings
@@ -44,16 +46,45 @@ class RabbitMQSettings(BaseModel):
         return f"amqps://{self.username}:{self.password}@{self.host}:{self.port}{self.vhost}"
 
 
+class ODMProcessingOptions(BaseModel):
+    dsm: bool = False
+    dtm: bool = False
+    # resolution in cm/pixel
+    resolution: int | None = 10
+    texture_size: int = 2048
+    # skip dense reconstruction
+    fast_orthophoto: bool = False
+    # reduce matching (good or 100s of images)
+    matcher_neighbors: int = 8
+    # balance between speed and quality
+    feature_quality: str = "medium"
+    point_cloud_quality: str = "medium"
+    ignore_gsd: bool = False
+    ski_3d_model: bool = True
+    skip_post_processing: bool = False
+
+    def to_pyodm_options(self) -> dict[str, Any]:
+        options = {}
+        options["orthophoto-resolution"] = self.resolution
+        options["fast-orthophoto"] = self.fast_orthophoto
+        options["skip-3dmodel"] = self.ski_3d_model
+        options["matcher-neighbors"] = self.matcher_neighbors
+        options["feature-quality"] = self.feature_quality
+        options["pc-quality"] = self.point_cloud_quality
+        options["skip-post-processing"] = self.skip_post_processing
+        options["ignore-gsd"] = self.ignore_gsd
+        return options
+
+
 class NodeODMSettings(BaseModel):
     host: str
     port: int
     token: str
-
-    quality: str = "medium"
     max_concurrent_tasks: int = 2
     poll_interval: int = 30
     poll_retries: int = 5
     cancel_on_shutdown: bool = False
+    options: ODMProcessingOptions = ODMProcessingOptions()
 
     @property
     def url(self) -> str:

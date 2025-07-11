@@ -2,7 +2,7 @@ from pathlib import Path
 
 import structlog
 
-from odm_tools.models import DataType
+from odm_tools.models import DataType, ProcessingRequest
 from odm_tools.utils import find_images
 
 log = structlog.get_logger()
@@ -47,16 +47,16 @@ class FileManager:
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
-    def find_result_files(self, result_path: Path) -> dict[str, Path]:
+    def find_result_files(self, result_path: Path, request: ProcessingRequest) -> dict[str, Path]:
         result_files = {}
         if result_path and result_path.exists():
             ortho_path = result_path / "odm_orthophoto" / "odm_orthophoto.tif"
+            # TODO add thermal and optionally 3D or report
             # report_path = result_path / "odm_report" / "odm_report.pdf"
 
             if ortho_path.exists():
-                result_files[ortho_path.stem] = ortho_path
-            # if report_path.exists():
-            # result_files[report_path](report_path)
+                ortho_name = f"{request.start.strftime('%Y%m%d')}_drone_ortho_{DataType['rgb'].value}"
+                result_files[ortho_name] = ortho_path
 
         return result_files
 

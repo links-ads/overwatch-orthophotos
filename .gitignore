@@ -196,3 +196,7 @@ cython_debug/
 # configuration files
 config.yml
 config.yaml
+.vscode/
+*.tif
+# uv files
+uv.lock

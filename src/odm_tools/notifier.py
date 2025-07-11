@@ -184,8 +184,6 @@ class AsyncRabbitMQNotifier:
         message: str,
     ) -> bool:
         """Send task progress update notification."""
-        print("sending update")
-        print(request_id, datatype_id, message)
         try:
             status_update = StatusUpdate(
                 request_id=request_id,

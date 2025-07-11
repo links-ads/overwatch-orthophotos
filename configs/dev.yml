@@ -7,7 +7,7 @@ rmq:
   ssl: true
 ckan:
   url: "https://ckan.terra-sense.eu"
-  app_project: "engineering"
+  owner_org: "engineering"
   organization_email: "ads@linksfoundation.com"
   organization_name: "LINKS Foundation"
   auth:
@@ -15,9 +15,15 @@ ckan:
     username: "mario"
     password: "mario"
     client_id: "overwatch-partner"
+    scope: "openid"
     client_secret: "X6GqQ4J6WIhK63thoqgIkU1o5lJ8AuLZ"
     api_key: "ca71207f-732d-4b96-840a-a11d20ffb812"
 nodeodm:
   host: "localhost"
   port: 3000
   token: "tbd"
+  poll_interval: 10
+  options:
+    resolution: 25
+    fast_orthophoto: true
+
