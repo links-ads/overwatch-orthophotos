@@ -1,0 +1,28 @@
+rmq:
+  host: "144.76.238.25"
+  port: "5672"
+  vhost: "/"
+  username: "user" # provided by ENG
+  password: "pass" # provided by ENG
+  ssl: true
+ckan:
+  url: "https://ckan.terra-sense.eu"
+  owner_org: "engineering" # keep this as is
+  organization_email: "email@orgname" # set to your organization email
+  organization_name: "orgname" # set to your readable organization name
+  auth:
+    url: "https://overwatch.terra-sense.eu/keycloak/realms/ckan-realm/protocol/openid-connect/token"
+    username: "user" # provided by ENG
+    password: "pass" # provided by ENG
+    client_id: "clientid" # provided by ENG
+    scope: "openid"
+    client_secret: "secret" # provided by ENG
+    api_key: "apikey" # provided by ENG
+nodeodm:
+  host: "nodeodm"
+  port: 3000
+  token: "tbd" # not set at the moment
+  poll_interval: 10 # in seconds
+  options:
+    resolution: 25 # in centimeters
+    fast_orthophoto: true # see other options in odm_tools.config

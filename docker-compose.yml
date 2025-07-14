@@ -25,20 +25,15 @@ services:
     build:
       context: .
       dockerfile: containers/odm-tools.dockerfile
-    container_name: odm-tools
+    container_name: odm-tools:$TARGET
+    image: ghcr.io/links-ads/odm-tools:$TARGET
     depends_on:
       - nodeodm
     volumes:
-      - ./data/images:/app/images
-      - ./data/output:/app/output
-    environment:
-      - NODEODM_HOST=nodeodm
-      - NODEODM_PORT=3000
-      - CKAN_BASE_URL=${CKAN_BASE_URL}
-      - OAUTH2_CLIENT_ID=${OAUTH2_CLIENT_ID}
-      - OAUTH2_CLIENT_SECRET=${OAUTH2_CLIENT_SECRET}
+      - ./data:/app/data:rw
+      - ./configs/$TARGET.yml:/app/config.yml:ro
     profiles:
-      - manual  # This prevents auto-start, requires manual launch
+      - manual  # prevents auto-start, requires manual launch
     restart: "no"
 
 volumes:
