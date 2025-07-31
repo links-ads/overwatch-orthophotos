@@ -109,6 +109,7 @@ class AsyncRabbitMQNotifier:
                     message_id=f"status-{status_update.request_id}-{status_update.datatype_id}-{status_update.status}",
                     app_id="odm-processor",
                     headers={
+                        "dbCollection": "requestStatus",
                         "request_id": status_update.request_id,
                         "datatype_id": str(status_update.datatype_id),
                         "status": status_update.status,
