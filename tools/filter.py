@@ -20,12 +20,11 @@ import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
 
-def get_image_files(directory: Path) -> List[Path]:
+def get_image_files(directory: Path) -> list[Path]:
     """
     Get all image files from directory, sorted by name.
 
@@ -46,9 +45,7 @@ def get_image_files(directory: Path) -> List[Path]:
     return sorted(image_files)
 
 
-def find_image_intersection(
-    thermal_dir: Path, vis_dir: Path
-) -> Tuple[List[Path], List[Path]]:
+def find_image_intersection(thermal_dir: Path, vis_dir: Path) -> tuple[list[Path], list[Path]]:
     """
     Find intersection of thermal and vis images based on base names.
 
@@ -61,9 +58,7 @@ def find_image_intersection(
     """
     thermal_files = get_image_files(thermal_dir)
     vis_files = get_image_files(vis_dir)
-    logger.info(
-        f"Found {len(thermal_files)} thermal images, {len(vis_files)} vis images"
-    )
+    logger.info(f"Found {len(thermal_files)} thermal images, {len(vis_files)} vis images")
     # Create mapping of base names to file paths
     thermal_map = {f.stem: f for f in thermal_files}
     vis_map = {f.stem: f for f in vis_files}
@@ -78,7 +73,7 @@ def find_image_intersection(
     return matched_thermal, matched_vis
 
 
-def trim_and_subsample(image_list: List[Path], subsample_n: int) -> List[Path]:
+def trim_and_subsample(image_list: list[Path], subsample_n: int) -> list[Path]:
     """
     Trim 25% from beginning and end, then subsample by keeping every Nth image.
 
@@ -105,9 +100,7 @@ def trim_and_subsample(image_list: List[Path], subsample_n: int) -> List[Path]:
         subsampled_list = trimmed_list
     else:
         subsampled_list = trimmed_list[::subsample_n]
-    logger.info(
-        f"After subsampling (every {subsample_n}): {len(subsampled_list)} images"
-    )
+    logger.info(f"After subsampling (every {subsample_n}): {len(subsampled_list)} images")
     return subsampled_list
 
 
@@ -129,13 +122,11 @@ def calculate_subsample_n(total_images: int, target_count: int) -> int:
         return 1  # Keep all trimmed images
     # Calculate N such that images_after_trim / N ≈ target_count
     n = max(1, int(images_after_trim / target_count))
-    logger.info(
-        f"Calculated subsample factor: {n} (will result in ~{images_after_trim // n} images)"
-    )
+    logger.info(f"Calculated subsample factor: {n} (will result in ~{images_after_trim // n} images)")
     return n
 
 
-def copy_images(source_images: List[Path], dest_dir: Path) -> None:
+def copy_images(source_images: list[Path], dest_dir: Path) -> None:
     """
     Copy selected images to destination directory.
 
@@ -161,7 +152,10 @@ def process_bag(
     processed_data_dir: Path,
     subsample_n: int | None = None,
     target_count: int | None = None,
-) -> Dict[str, int]:
+    rgb_dir: str = "vis",
+    swir_dir: str = "thermal",
+    matching_only: bool = True,
+) -> dict[str, int]:
     """
     Process a single image bag (request ID).
 
@@ -175,36 +169,40 @@ def process_bag(
     Returns:
         Dictionary with processing statistics
     """
+    print(f"MATCHING ONLY: {matching_only}")
     logger.info(f"Processing bag: {bag_name}")
 
     bag_dir = raw_data_dir / bag_name
-    thermal_dir = bag_dir / "thermal"
-    vis_dir = bag_dir / "vis"
+    thermal_dir = bag_dir / swir_dir
+    vis_dir = bag_dir / rgb_dir
 
-    # Find intersection of thermal and vis images
-    thermal_files, vis_files = find_image_intersection(thermal_dir, vis_dir)
-
-    if not thermal_files:
-        logger.warning(f"No matching images found in {bag_name}")
-        return {"thermal": 0, "vis": 0}
+    # Find intersection of thermal and vis images if matching required
+    if matching_only:
+        thermal_files, vis_files = find_image_intersection(thermal_dir, vis_dir)
+        if not thermal_files:
+            logger.warning(f"No matching images found in {bag_name}")
+            return {swir_dir: 0, rgb_dir: 0}
+    else:
+        thermal_files = get_image_files(thermal_dir)
+        vis_files = get_image_files(vis_dir)
 
     # Calculate subsample factor if not provided
+    subsample_n_vis = subsample_n_thermal = 1  # Keep all by default
     if subsample_n is None and target_count is not None:
-        subsample_n = calculate_subsample_n(len(thermal_files), target_count)
-    elif subsample_n is None:
-        subsample_n = 1  # Keep all by default
+        subsample_n_vis = calculate_subsample_n(len(vis_files), target_count)
+        subsample_n_thermal = calculate_subsample_n(len(thermal_files), target_count)
 
     # Process thermal images
-    selected_thermal = trim_and_subsample(thermal_files, subsample_n)
-    thermal_dest_dir = processed_data_dir / bag_name / "22003"  # thermal datatype ID
+    selected_thermal = trim_and_subsample(thermal_files, subsample_n_thermal)
+    thermal_dest_dir = processed_data_dir / bag_name / "thermal"
     copy_images(selected_thermal, thermal_dest_dir)
 
     # Process vis images
-    selected_vis = trim_and_subsample(vis_files, subsample_n)
-    vis_dest_dir = processed_data_dir / bag_name / "22002"  # vis datatype ID
+    selected_vis = trim_and_subsample(vis_files, subsample_n_vis)
+    vis_dest_dir = processed_data_dir / bag_name / "rgb"
     copy_images(selected_vis, vis_dest_dir)
 
-    return {"thermal": len(selected_thermal), "vis": len(selected_vis)}
+    return {swir_dir: len(selected_thermal), rgb_dir: len(selected_vis)}
 
 
 def create_request_json(bag_name: str, processed_data_dir: Path) -> None:
@@ -245,9 +243,7 @@ def create_request_json(bag_name: str, processed_data_dir: Path) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Process and filter drone imagery data"
-    )
+    parser = argparse.ArgumentParser(description="Process and filter drone imagery data")
     parser.add_argument(
         "--raw-dir",
         type=Path,
@@ -271,13 +267,27 @@ def main():
         default=200,
         help="Target number of images per datatype (default: 200)",
     )
-    parser.add_argument(
-        "--bags", nargs="+", help="Specific bag names to process (default: all bags)"
-    )
+    parser.add_argument("--bags", nargs="+", help="Specific bag names to process (default: all bags)")
     parser.add_argument(
         "--create-request-json",
         action="store_true",
         help="Create request.json files for processed bags",
+    )
+    parser.add_argument(
+        "--rgb-name",
+        type=str,
+        default="vis",
+        help="Name of the folder containing RGB images",
+    )
+    parser.add_argument(
+        "--thermal-name",
+        default="thermal",
+        help="Name of the folder containing thermal images",
+    )
+    parser.add_argument(
+        "--matching-only",
+        action="store_true",
+        help="Keep only matching pairs",
     )
 
     args = parser.parse_args()
@@ -298,7 +308,7 @@ def main():
         sys.exit(1)
 
     logger.info(f"Found {len(bag_names)} bags to process: {bag_names}")
-    total_stats = {"thermal": 0, "vis": 0}
+    total_stats = {args.thermal_name: 0, args.rgb_name: 0}
 
     for bag_name in bag_names:
         try:
@@ -308,10 +318,13 @@ def main():
                 processed_data_dir=args.processed_dir,
                 subsample_n=args.subsample_n,
                 target_count=args.target_count,
+                rgb_dir=args.rgb_name,
+                swir_dir=args.thermal_name,
+                matching_only=args.matching_only,
             )
 
-            total_stats["thermal"] += stats["thermal"]
-            total_stats["vis"] += stats["vis"]
+            total_stats[args.thermal_name] += stats[args.thermal_name]
+            total_stats[args.rgb_name] += stats[args.rgb_name]
 
             if args.create_request_json:
                 create_request_json(bag_name, args.processed_dir)
@@ -325,8 +338,8 @@ def main():
     logger.info("PROCESSING SUMMARY")
     logger.info("=" * 50)
     logger.info(f"Processed {len(bag_names)} bags")
-    logger.info(f"Total thermal images: {total_stats['thermal']}")
-    logger.info(f"Total vis images: {total_stats['vis']}")
+    logger.info(f"Total thermal images: {total_stats[args.thermal_name]}")
+    logger.info(f"Total vis images: {total_stats[args.rgb_name]}")
     logger.info(f"Output directory: {args.processed_dir}")
 
 
