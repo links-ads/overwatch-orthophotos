@@ -24,6 +24,13 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def get_frame_number(filename: Path):
+    """Extract bag number and frame number from filename"""
+    # Pattern: bag_N_M.extension
+    frame = int(filename.stem.rsplit("_", 1)[-1])
+    return frame
+
+
 def get_image_files(directory: Path) -> list[Path]:
     """
     Get all image files from directory, sorted by name.
@@ -42,7 +49,7 @@ def get_image_files(directory: Path) -> list[Path]:
     for ext in image_extensions:
         image_files.extend(directory.glob(f"*{ext}"))
         image_files.extend(directory.glob(f"*{ext.upper()}"))
-    return sorted(image_files)
+    return sorted(image_files, key=get_frame_number)
 
 
 def find_image_intersection(thermal_dir: Path, vis_dir: Path) -> tuple[list[Path], list[Path]]:
@@ -73,7 +80,7 @@ def find_image_intersection(thermal_dir: Path, vis_dir: Path) -> tuple[list[Path
     return matched_thermal, matched_vis
 
 
-def trim_and_subsample(image_list: list[Path], subsample_n: int) -> list[Path]:
+def trim_and_subsample(image_list: list[Path], subsample_n: int, trim_start: int, trim_end: int) -> list[Path]:
     """
     Trim 25% from beginning and end, then subsample by keeping every Nth image.
 
@@ -84,13 +91,15 @@ def trim_and_subsample(image_list: list[Path], subsample_n: int) -> list[Path]:
     Returns:
         Filtered list of image paths
     """
+    assert trim_start >= 0 and trim_start <= len(image_list), f"Invalid trim start: {trim_start}"
+    assert trim_end >= 0 and trim_end <= len(image_list), f"Invalid trim end: {trim_end}"
     if not image_list:
         return []
 
     total_count = len(image_list)
     # Calculate trim indices (remove 25% from each end, keep middle 50%)
-    start_idx = int(total_count * 0.25)
-    end_idx = int(total_count * 0.75)
+    start_idx = trim_start
+    end_idx = len(image_list) - trim_end
     trimmed_list = image_list[start_idx:end_idx]
     logger.info(
         f"After trimming: {len(trimmed_list)} images (removed {start_idx} from start, {total_count - end_idx} from end)"
@@ -155,6 +164,8 @@ def process_bag(
     rgb_dir: str = "vis",
     swir_dir: str = "thermal",
     matching_only: bool = True,
+    trim_start: int = 0,
+    trim_end: int = 0,
 ) -> dict[str, int]:
     """
     Process a single image bag (request ID).
@@ -169,7 +180,6 @@ def process_bag(
     Returns:
         Dictionary with processing statistics
     """
-    print(f"MATCHING ONLY: {matching_only}")
     logger.info(f"Processing bag: {bag_name}")
 
     bag_dir = raw_data_dir / bag_name
@@ -187,49 +197,85 @@ def process_bag(
         vis_files = get_image_files(vis_dir)
 
     # Calculate subsample factor if not provided
-    subsample_n_vis = subsample_n_thermal = 1  # Keep all by default
+    subsample_n_vis = subsample_n_thermal = subsample_n or 1
     if subsample_n is None and target_count is not None:
         subsample_n_vis = calculate_subsample_n(len(vis_files), target_count)
         subsample_n_thermal = calculate_subsample_n(len(thermal_files), target_count)
 
     # Process thermal images
-    selected_thermal = trim_and_subsample(thermal_files, subsample_n_thermal)
+    selected_thermal = trim_and_subsample(
+        image_list=thermal_files,
+        subsample_n=subsample_n_thermal,
+        trim_start=trim_start,
+        trim_end=trim_end,
+    )
     thermal_dest_dir = processed_data_dir / bag_name / "thermal"
     copy_images(selected_thermal, thermal_dest_dir)
 
     # Process vis images
-    selected_vis = trim_and_subsample(vis_files, subsample_n_vis)
+    selected_vis = trim_and_subsample(
+        image_list=vis_files,
+        subsample_n=subsample_n_vis,
+        trim_start=trim_start,
+        trim_end=trim_end,
+    )
     vis_dest_dir = processed_data_dir / bag_name / "rgb"
     copy_images(selected_vis, vis_dest_dir)
 
     return {swir_dir: len(selected_thermal), rgb_dir: len(selected_vis)}
 
 
-def create_request_json(bag_name: str, processed_data_dir: Path) -> None:
+def create_request_json(
+    bag_name: str,
+    processed_data_dir: Path,
+    situation_id: str = "none",
+    datatype_ids: list | None = None,
+    bbox_coords: list | None = None,
+) -> None:
     """
-    Create a basic request.json file for the processed bag.
+    Create a request.json file for the processed bag.
 
     Args:
         bag_name: Name of the bag (request ID)
         processed_data_dir: Path to processed data directory
+        situation_id: Situation identifier (default: "none")
+        datatype_ids: List of datatype IDs (default: [22002, 22003])
+        bbox_coords: Bounding box coordinates as [min_lon, min_lat, max_lon, max_lat]
     """
+    if datatype_ids is None:
+        datatype_ids = [22002, 22003]
+
+    # Default coordinates if none provided
+    if bbox_coords is None:
+        # [min_lon, min_lat, max_lon, max_lat]
+        bbox_coords = [-8.472698427917976, 40.405542218603046, -7.472698427917976, 40.558658193522064]
+
+    min_lon, min_lat, max_lon, max_lat = bbox_coords
+
+    # Create polygon from bounding box
+    polygon_coords = [
+        [min_lon, max_lat],  # top-left
+        [min_lon, min_lat],  # bottom-left
+        [max_lon, min_lat],  # bottom-right
+        [max_lon, max_lat],  # top-right
+        [min_lon, max_lat],  # close polygon
+    ]
+
+    current_time = datetime.now().isoformat() + "Z"
+
     request_data = {
         "id": bag_name,
         "requestId": bag_name,
-        "timestamp": datetime.now().isoformat() + "Z",
-        "datatypeIds": [22002, 22003],  # vis, thermal
+        "situationId": situation_id,
+        "timestamp": current_time,
+        "start": current_time,
+        "end": current_time,
+        "datatypeIds": datatype_ids,
         "feature": {
             "type": "Feature",
+            "properties": {},
             "geometry": {
-                "coordinates": [
-                    [
-                        [-8.472698427917976, 40.558658193522064],
-                        [-8.472698427917976, 40.405542218603046],
-                        [-8.239298692728056, 40.405542218603046],
-                        [-8.239298692728056, 40.558658193522064],
-                        [-8.472698427917976, 40.558658193522064],
-                    ]
-                ],
+                "coordinates": [polygon_coords],
                 "type": "Polygon",
             },
         },
@@ -239,6 +285,7 @@ def create_request_json(bag_name: str, processed_data_dir: Path) -> None:
 
     with open(request_json_path, "w") as f:
         json.dump(request_data, f, indent=2)
+
     logger.info(f"Created request.json for {bag_name}")
 
 
@@ -255,6 +302,13 @@ def main():
         type=Path,
         default=Path("data/processed"),
         help="Path to processed data directory (default: data/processed)",
+    )
+    parser.add_argument("--trim-start", type=int, default=100, help="Amount of frames to trim from the start")
+    parser.add_argument(
+        "--trim-end",
+        type=int,
+        default=100,
+        help="Amount of frames to trim from the end",
     )
     parser.add_argument(
         "--subsample-n",
@@ -321,6 +375,8 @@ def main():
                 rgb_dir=args.rgb_name,
                 swir_dir=args.thermal_name,
                 matching_only=args.matching_only,
+                trim_start=args.trim_start,
+                trim_end=args.trim_end,
             )
 
             total_stats[args.thermal_name] += stats[args.thermal_name]
