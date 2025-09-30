@@ -267,6 +267,10 @@ class CKANUploader:
                 start_date=request.start,
                 end_date=request.end,
                 request_code=request.request_id,
+                additional_data=dict(
+                    situation_id=request.situation_id,
+                    request_code=request.request_id,
+                ),
             )
             # uploading package
             log.info(f"Uploading metadata for package {package_title}...")

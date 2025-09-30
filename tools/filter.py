@@ -180,7 +180,6 @@ def process_bag(
     Returns:
         Dictionary with processing statistics
     """
-    print(f"MATCHING ONLY: {matching_only}")
     logger.info(f"Processing bag: {bag_name}")
 
     bag_dir = raw_data_dir / bag_name
