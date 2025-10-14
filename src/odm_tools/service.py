@@ -58,10 +58,8 @@ class ProcessingService:
             shutdown_handler = GracefulShutdown(self.processor)
             signal.signal(signal.SIGINT, shutdown_handler.request_shutdown)  # Ctrl+C
             signal.signal(signal.SIGTERM, shutdown_handler.request_shutdown)  # Termination
-
             # Check node availability
             self.processor.check_node_availability()
-
             # Process the request
             await self.processor.process_request(request_path)
 

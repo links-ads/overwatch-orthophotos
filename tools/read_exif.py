@@ -1,43 +1,28 @@
-#!/usr/bin/env python3
-
 import argparse
 import sys
 from pathlib import Path
 
-from PIL import Image
-from PIL.ExifTags import TAGS
+import exifread
 
 
-def read_exif(image_path):
+def read_metadata(image_path):
     """Read and return EXIF data from an image file."""
-    try:
-        with Image.open(image_path) as img:
-            exif_data = img.getexif()
-            if not exif_data:
-                return None
-
-            # Convert EXIF data to readable format
-            exif_dict = {}
-            for tag_id, value in exif_data.items():
-                tag = TAGS.get(tag_id, tag_id)
-                exif_dict[tag] = value
-
-            return exif_dict
-    except Exception as e:
-        print(f"Error reading image: {e}", file=sys.stderr)
-        return None
+    with open(image_path, "rb") as file_handle:
+        # Return Exif tags
+        tags = exifread.process_file(file_handle)
+        return tags
 
 
-def print_exif(exif_dict):
+def print_metadata(metadata: dict):
     """Print EXIF data in a nicely formatted way."""
-    if not exif_dict:
+    if not metadata:
         print("No EXIF data found in the image.")
         return
 
     print("EXIF Data:")
     print("-" * 40)
 
-    for tag, value in exif_dict.items():
+    for tag, value in metadata.items():
         # Handle special cases for better formatting
         if isinstance(value, bytes):
             try:
@@ -65,8 +50,8 @@ def main():
         sys.exit(1)
 
     # Read and display EXIF data
-    exif_data = read_exif(args.image)
-    print_exif(exif_data)
+    data = read_metadata(args.image)
+    print_metadata(data)
 
 
 if __name__ == "__main__":
