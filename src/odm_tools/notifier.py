@@ -15,12 +15,13 @@ log = structlog.get_logger()
 
 
 class AsyncRabbitMQNotifier:
-    def __init__(self):
+    def __init__(self, send_notifications: bool = True):
         self.cfg = settings.rmq
         self.connection: AbstractRobustConnection | None = None
         self.channel: Channel | None = None
         self._connection_lock = asyncio.Lock()
         self._is_connected = False
+        self._notify = send_notifications
 
     async def connect(self) -> None:
         """Establish connection to RabbitMQ."""
@@ -52,8 +53,8 @@ class AsyncRabbitMQNotifier:
                         "application": "odm-tools",
                     },
                 )
-                self.channel = await self.connection.channel()
-                await self.channel.set_qos(prefetch_count=10)
+                self.channel = await self.connection.channel()  # type: ignore
+                await self.channel.set_qos(prefetch_count=10)  # type: ignore
                 self._is_connected = True
                 log.info("Connected to RabbitMQ", host=self.cfg.host, vhost=self.cfg.vhost)
             except Exception as e:
@@ -124,7 +125,10 @@ class AsyncRabbitMQNotifier:
                     durable=True,
                     passive=True,
                 )
-                await exchange.publish(message, routing_key=routing_key)
+                if self._notify:
+                    await exchange.publish(message, routing_key=routing_key)
+                else:
+                    log.debug("Mocking notification")
 
                 log.debug(
                     "StatusUpdate published",
@@ -195,7 +199,7 @@ class AsyncRabbitMQNotifier:
             )
         except Exception as e:
             print(e)
-        return await self.publish_status_update(status_update)
+        return await self.publish_status_update(status_update)  # type: ignore
 
     async def send_task_end(
         self,

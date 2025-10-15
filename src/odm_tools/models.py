@@ -4,9 +4,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal
 
+from geojson_pydantic import Feature, MultiPolygon, Polygon
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
-from pydantic_geojson import FeatureModel, MultiPolygonModel, PolygonModel
 
 
 class DataType(Enum):
@@ -39,7 +39,7 @@ class ProcessingRequest(BaseModel):
     request_id: str = Field(alias="requestId")
     situation_id: str = Field(alias="situationId")
     datatype_ids: list[int] = Field(alias="datatypeIds")
-    feature: FeatureModel
+    feature: Feature
     path: Path
 
     @classmethod
@@ -137,7 +137,7 @@ class MetadataINSPIRE(BaseModel):
     coordinatesystemreference_code: int = 4326
     coordinatesystemreference_codespace: str = "EPSG"
     character_encoding: str = "UTF-8"
-    spatial: PolygonModel | MultiPolygonModel | None = None
+    spatial: Polygon | MultiPolygon | None = None
     request_code: str = ""
     destinatary_organization: str = ""
     external_attributes: dict = {}

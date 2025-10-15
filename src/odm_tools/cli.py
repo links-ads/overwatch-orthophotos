@@ -16,19 +16,43 @@ cli = ArgParser(name="odm-tool", description="ODM Tools - Drone imagery orthorec
 @cli.command()
 def process(
     request_path: Path = ArgField("-r", description="Path to the request to process"),
-    dry_run: bool = ArgField("-d", default=False, description="Execute a first check without processing anything"),
-    log_level: Literal["debug", "info", "warning"] = ArgField(
-        "-l", default="info", description="Log level for stdout"
+    dry_run: bool = ArgField(
+        "-d",
+        default=False,
+        description="Execute a first check without processing anything",
     ),
+    skip_preprocess: bool = ArgField(
+        "--skip-preprocess",
+        default=False,
+        description="Skip preprocessing, use original images",
+    ),
+    force_preprocess: bool = ArgField(
+        "--force-preprocess",
+        default=False,
+        description="Force re-run preprocessing even if already done",
+    ),
+    frame_step: int = ArgField(
+        "--frame-step",
+        default=1,
+        description="Keep 1 out of N images (default: 1 = keep all)",
+    ),
+    log_level: Literal["debug", "info", "warning"] = ArgField("-l", default="info", description="Log level"),
 ) -> None:
     setup_logging(log_level=log_level)
 
     try:
         service = ProcessingService()
-        exit_code = asyncio.run(service.process_request(request_path, dry_run))
+        exit_code = asyncio.run(
+            service.process_request(
+                request_path=request_path,
+                dry_run=dry_run,
+                skip_preprocess=skip_preprocess,
+                force_preprocess=force_preprocess,
+                framerate=frame_step,
+            )
+        )
         sys.exit(exit_code)
     except KeyboardInterrupt:
-        # Handle Ctrl+C during startup/teardown
         structlog.get_logger().info("Interrupted during startup")
         sys.exit(2)
 

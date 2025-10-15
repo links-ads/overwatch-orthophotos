@@ -33,7 +33,7 @@ class ODMProcessor:
     Main workflow orchestrator for ODM processing using PyODM.
     """
 
-    def __init__(self):
+    def __init__(self, notify: bool = True):
         self.node = Node(
             host=settings.nodeodm.host,
             port=settings.nodeodm.port,
@@ -44,7 +44,7 @@ class ODMProcessor:
         self._shutdown_event = asyncio.Event()
         self._running_tasks: set[asyncio.Task] = set()
         self.active_tasks: dict[str, TaskTracker] = {}
-        self.notifier = AsyncRabbitMQNotifier()
+        self.notifier = AsyncRabbitMQNotifier(send_notifications=notify)
         self.uploader = CKANUploader()
 
     def check_node_availability(self) -> None:
@@ -253,11 +253,13 @@ class ODMProcessor:
             except Exception as e:
                 log.error("Error during task cancellation", task_id=task.uuid, error=str(e))
 
-    async def process_request(self, request_path: Path) -> None:
+    async def process_request(self, request_path: Path, data_path: Path | None = None) -> None:
+        data_path = data_path or request_path
         request = self._load_request_metadata(request_path)
         log.info(
             "Processing request",
             request_id=request.request_id,
+            data_path=data_path,
             datatype_ids=request.datatype_ids,
             options=self.odm_options.model_dump(),
         )
@@ -265,7 +267,7 @@ class ODMProcessor:
         # Find datatype directories and validate images
         async with self.notifier:
             try:
-                file_manager = FileManager(request_path=request_path)
+                file_manager = FileManager(request_path=data_path)
                 datatype_groups = file_manager.validate_datatype_groups(request.datatype_ids)
                 odm_tasks = await self._create_tasks(datatype_groups=datatype_groups, request=request)
 
@@ -281,13 +283,13 @@ class ODMProcessor:
                 log.info("Processing cancelled, cleaning up...")
                 # Cancel any tasks that were created
                 if "odm_tasks" in locals():
-                    await self._cancel_odm_tasks(odm_tasks)
+                    await self._cancel_odm_tasks(odm_tasks)  # type: ignore
                 raise
             except Exception as e:
                 log.error("Processing failed", error=str(e))
                 # Cancel any tasks that were created
                 if "odm_tasks" in locals():
-                    await self._cancel_odm_tasks(odm_tasks)
+                    await self._cancel_odm_tasks(odm_tasks)  # type: ignore
                 raise
 
     async def monitor_tasks(self, tasks: list, request: ProcessingRequest) -> None:

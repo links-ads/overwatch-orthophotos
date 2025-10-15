@@ -4,7 +4,7 @@ from pathlib import Path
 
 import requests
 import structlog
-from pydantic_geojson import MultiPolygonModel, PolygonModel
+from geojson_pydantic import MultiPolygon, Polygon
 
 from odm_tools.auth import KeyCloakAuthenticator
 from odm_tools.config import settings
@@ -141,7 +141,7 @@ class CKANUploader:
         package_keywords: list[str],
         package_topic: str,
         image_resolution: int,
-        request_geometry: PolygonModel | MultiPolygonModel,
+        request_geometry: Polygon | MultiPolygon,
         start_date: datetime,
         end_date: datetime,
         additional_data: dict | None = None,
@@ -193,7 +193,7 @@ class CKANUploader:
             log.debug("Metadata uploaded", response=response.json())
             return response.json()["result"]["id"]
         except requests.HTTPError as e:
-            log.exception("An HTTP error occurred", error=response.json())
+            log.exception("An HTTP error occurred", error=response.json())  # type: ignore
             raise UploadError(e)
         except Exception as e:
             log.exception("An unexpected error occurred", error=e)
@@ -231,7 +231,7 @@ class CKANUploader:
                 response.raise_for_status()
                 return response.json()["result"]["url"]
         except requests.HTTPError as e:
-            log.exception("An HTTP error occurred", error=response.json())
+            log.exception("An HTTP error occurred", error=response.json())  # type: ignore
             raise UploadError(e)
         except Exception as e:
             log.exception("An unexpected error occurred", error=str(e))
