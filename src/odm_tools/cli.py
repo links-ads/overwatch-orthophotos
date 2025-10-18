@@ -5,11 +5,13 @@ from typing import Literal
 
 import structlog
 from argdantic import ArgField, ArgParser
+from dotenv import load_dotenv
 from pyodm.api import TaskStatus
 
 from odm_tools.service import ProcessingService
 from odm_tools.utils import setup_logging
 
+load_dotenv()
 cli = ArgParser(name="odm-tool", description="ODM Tools - Drone imagery orthorectification CLI")
 
 
@@ -43,7 +45,7 @@ def process(
     try:
         service = ProcessingService()
         exit_code = asyncio.run(
-            service.process_request(
+            service.handle_request(
                 request_path=request_path,
                 dry_run=dry_run,
                 skip_preprocess=skip_preprocess,

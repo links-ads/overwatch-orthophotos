@@ -1,7 +1,9 @@
 import asyncio
+import os
 import ssl
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Literal
 
 import aio_pika
 import structlog
@@ -15,13 +17,15 @@ log = structlog.get_logger()
 
 
 class AsyncRabbitMQNotifier:
-    def __init__(self, send_notifications: bool = True):
+    def __init__(self):
         self.cfg = settings.rmq
         self.connection: AbstractRobustConnection | None = None
         self.channel: Channel | None = None
         self._connection_lock = asyncio.Lock()
         self._is_connected = False
-        self._notify = send_notifications
+        self._notify = os.getenv("SUPPRESS_NOTIFICATIONS", True)
+        if not self._notify:
+            log.warning("Suppressing status message notifications")
 
     async def connect(self) -> None:
         """Establish connection to RabbitMQ."""
@@ -166,72 +170,76 @@ class AsyncRabbitMQNotifier:
 
         return False
 
+    async def _send_task_update(
+        self,
+        request_id: str,
+        datatype_ids: list[int],
+        status: Literal["start", "end", "update", "error"],
+        message: str,
+    ) -> bool:
+        updates = [
+            StatusUpdate(
+                request_id=request_id,
+                datatype_id=dtype,
+                status=status,
+                timestamp=datetime.now(tz=UTC),
+                message=message,
+            )
+            for dtype in datatype_ids
+        ]
+        return all(await asyncio.gather(*(self.publish_status_update(u) for u in updates)))
+
     async def send_task_start(
         self,
         request_id: str,
-        datatype_id: int,
+        datatype_ids: list[int],
         message: str = "ODM Task started",
     ) -> bool:
-        """Send task start notification."""
-        status_update = StatusUpdate(
+        return await self._send_task_update(
             request_id=request_id,
-            datatype_id=datatype_id,
+            datatype_ids=datatype_ids,
             status="start",
-            timestamp=datetime.now(),
             message=message,
         )
-        return await self.publish_status_update(status_update)
 
     async def send_task_update(
         self,
         request_id: str,
-        datatype_id: int,
+        datatype_ids: list[int],
         message: str,
     ) -> bool:
-        """Send task progress update notification."""
-        try:
-            status_update = StatusUpdate(
-                request_id=request_id,
-                datatype_id=datatype_id,
-                status="update",
-                timestamp=datetime.now(),
-                message=message,
-            )
-        except Exception as e:
-            print(e)
-        return await self.publish_status_update(status_update)  # type: ignore
+        return await self._send_task_update(
+            request_id=request_id,
+            datatype_ids=datatype_ids,
+            status="update",
+            message=message,
+        )
 
     async def send_task_end(
         self,
         request_id: str,
-        datatype_id: int,
+        datatype_ids: list[int],
         message: str = "ODM Task completed",
     ) -> bool:
-        """Send task completion notification."""
-        status_update = StatusUpdate(
+        return await self._send_task_update(
             request_id=request_id,
-            datatype_id=datatype_id,
+            datatype_ids=datatype_ids,
             status="end",
-            timestamp=datetime.now(),
             message=message,
         )
-        return await self.publish_status_update(status_update)
 
     async def send_task_error(
         self,
         request_id: str,
-        datatype_id: int,
+        datatype_ids: list[int],
         message: str,
     ) -> bool:
-        """Send task error notification."""
-        status_update = StatusUpdate(
+        return await self._send_task_update(
             request_id=request_id,
-            datatype_id=datatype_id,
+            datatype_ids=datatype_ids,
             status="error",
-            timestamp=datetime.now(),
             message=message,
         )
-        return await self.publish_status_update(status_update)
 
     @asynccontextmanager
     async def connection_context(self):

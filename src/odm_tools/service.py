@@ -37,10 +37,13 @@ class GracefulShutdown:
 class ProcessingService:
     """Service layer for ODM processing operations."""
 
-    def __init__(self, notify: bool = True):
-        self.processor = ODMProcessor(notify=notify)
+    def __init__(self):
+        self.processor = ODMProcessor()
 
-    async def process_request(
+    def load_request_data(self, path: Path) -> ProcessingRequest:
+        return ProcessingRequest.from_file(path / "request.json")
+
+    async def handle_request(
         self,
         request_path: Path,
         dry_run: bool = False,
@@ -50,17 +53,15 @@ class ProcessingService:
     ) -> int:
         """Process a request with optional preprocessing."""
         try:
-            # Validate request structure first
+            # validate request structure first and load request data
             validate_request_structure(request_path)
+            request = self.load_request_data(request_path)
+            log.info("Starting request: ", request_id=request.request_id, dry_run=dry_run)
 
-            # Load request metadata
-            request = ProcessingRequest.from_file(request_path / "request.json")
-            log.info("Starting processing", request_id=request.request_id, dry_run=dry_run)
-
-            # Determine data path
+            # determine data path
             if skip_preprocess:
                 data_path = request_path
-                log.info("Skipping preprocessing, using original images")
+                log.info("User requested to skip preprocessing")
             else:
                 from odm_tools.preproc import PreprocessingManager
 
@@ -84,11 +85,9 @@ class ProcessingService:
             signal.signal(signal.SIGINT, shutdown_handler.request_shutdown)
             signal.signal(signal.SIGTERM, shutdown_handler.request_shutdown)
 
-            # Check node availability
+            # check node availability, if available launch tasks
             self.processor.check_node_availability()
-
-            # Process with ODM (pass both paths)
-            await self.processor.process_request(request_path, data_path)
+            await self.processor.process_request(request=request, data_path=data_path)
             log.info("Processing completed successfully")
             return 0
 
@@ -115,6 +114,7 @@ class ProcessingService:
             Tuple of (exit_code, removed_task_ids)
         """
         try:
+            request = self.load_request_data(request_path) if request_path else None
             log.info(
                 "Starting cleanup",
                 request_path=str(request_path),
@@ -127,7 +127,7 @@ class ProcessingService:
             signal.signal(signal.SIGTERM, shutdown_handler.request_shutdown)
             self.processor.check_node_availability()
             removed_tasks = await self.processor.clear_tasks(
-                request_path,
+                request,
                 statuses=statuses,
                 dry_run=dry_run,
             )
@@ -156,13 +156,14 @@ class ProcessingService:
             Tuple of (exit_code, task_infos)
         """
         try:
+            request = self.load_request_data(request_path) if request_path else None
             log.info("Listing tasks", request_path=str(request_path), statuses=statuses)
             # Setup signal handlers for graceful shutdown
             shutdown_handler = GracefulShutdown(self.processor)
             signal.signal(signal.SIGINT, shutdown_handler.request_shutdown)
             signal.signal(signal.SIGTERM, shutdown_handler.request_shutdown)
             self.processor.check_node_availability()
-            task_infos = await self.processor.list_tasks(request_path=request_path, statuses=statuses)
+            task_infos = await self.processor.list_tasks(request=request, statuses=statuses)
             return 0, task_infos
         except ProcessingCancelledError:
             log.info("Task listing was cancelled by user")
@@ -179,7 +180,7 @@ class ProcessingService:
 async def process_request_with_shutdown(request_path: Path, dry_run: bool = False) -> int:
     """Convenience function for processing requests."""
     service = ProcessingService()
-    return await service.process_request(request_path, dry_run)
+    return await service.handle_request(request_path, dry_run)
 
 
 async def cleanup_tasks_with_shutdown(

@@ -62,6 +62,7 @@ class ODMProcessingOptions(BaseModel):
     ignore_gsd: bool = False
     ski_3d_model: bool = True
     skip_post_processing: bool = False
+    radiometric_calibration: str | None = None
 
     def to_pyodm_options(self) -> dict[str, Any]:
         options = {}
@@ -73,6 +74,7 @@ class ODMProcessingOptions(BaseModel):
         options["pc-quality"] = self.point_cloud_quality
         options["skip-post-processing"] = self.skip_post_processing
         options["ignore-gsd"] = self.ignore_gsd
+        options["radiometric-calibration"] = self.radiometric_calibration
         return options
 
 
@@ -117,4 +119,4 @@ class Settings(BaseSettings):
 
 
 # singleton instance
-settings = Settings()  # noqa
+settings = Settings()  # type: ignore

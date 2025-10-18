@@ -60,11 +60,11 @@ def validate_request_structure(request_path: Path) -> None:
     The expected structure is as follows:
     data/
     ├── request_id_1/
-    │   ├── 22002 - folder containing images to orthorectify (rgb)
-    │   ├── 22003 - folder containing images to orthorectify (swir)
+    │   ├── rgb - folder containing images to orthorectify (rgb)
+    │   ├── thermal - folder containing images to orthorectify (swir)
     │   └── request.json - file containing request metadata
     ├── request_id_2/
-    │   ├── 22002
+    │   ├── rgb/
     │   ├── ...
     │   └── request.json
     └── ...
@@ -85,16 +85,13 @@ def validate_request_structure(request_path: Path) -> None:
     # Check for at least one datatype directory
     datatype_dirs = [d for d in request_path.iterdir() if d.is_dir()]
     if not datatype_dirs:
-        raise ValueError("At least one data type subdirectory is required.")
+        raise ValueError("At least rgb data type subdirectory is required.")
+    if len(datatype_dirs) == 1:
+        if datatype_dirs[0].name == "thermal":
+            raise ValueError("Cannot orthorectify just thermal")
 
 
-def find_images(root_path: Path) -> list[Path]:
+def find_images(root_path: Path, suffix: str | None = None, extension: str = ".jpg") -> list[Path]:
     """Find all image files in a directory."""
-    image_extensions = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
-    images = []
-
-    for file_path in root_path.iterdir():
-        if file_path.is_file() and file_path.suffix.lower() in image_extensions:
-            images.append(file_path)
-
-    return sorted(images)
+    search_pattern = f"*{suffix or ''}{extension}"
+    return sorted(root_path.glob(search_pattern))

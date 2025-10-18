@@ -240,7 +240,7 @@ class CKANUploader:
     def upload_results(
         self,
         request: ProcessingRequest,
-        datatype_id: int,
+        datatypes: dict[int, str],
         results: dict[str, Path],
         package_title: str | None = None,
     ) -> list[dict[str, str]]:
@@ -276,17 +276,18 @@ class CKANUploader:
             log.info(f"Uploading metadata for package {package_title}...")
             package_id = self._upload_metadata(dataset_metadata)
 
-            log.info(f"Updating resource to package {package_id}...")
-            url = [
-                self._upload_resource(
-                    package_id=package_id,
-                    resource_path=resource_path,
-                    resource_name=resource_path.name,
-                    datatype_id=datatype_id,
-                    time_start=request.start,
-                    time_end=request.end,
-                )
-            ]
-            log.info("Resource uploaded", url=url)
-            datasets.append(dict(dataset_id=package_id, url=url))
+            for datatype_id, datatype_name in datatypes.items():
+                log.info(f"Updating resource to package {package_id}...")
+                url = [
+                    self._upload_resource(
+                        package_id=package_id,
+                        resource_path=resource_path,
+                        resource_name=resource_path.name,
+                        datatype_id=datatype_id,
+                        time_start=request.start,
+                        time_end=request.end,
+                    )
+                ]
+                log.info("Resource uploaded", url=url)
+                datasets.append(dict(dataset_id=package_id, url=url))
         return datasets
