@@ -33,18 +33,17 @@ class ODMProcessor:
     Main workflow orchestrator for ODM processing using PyODM.
     """
 
-    def __init__(self, notify: bool = True):
+    def __init__(self):
         self.node = Node(
             host=settings.nodeodm.host,
             port=settings.nodeodm.port,
             token=settings.nodeodm.token,
         )
-        self.odm_options = settings.nodeodm.options
         self._cancel_tasks_on_shutdown = settings.nodeodm.cancel_on_shutdown
         self._shutdown_event = asyncio.Event()
         self._running_tasks: set[asyncio.Task] = set()
         self.active_tasks: dict[str, TaskTracker] = {}
-        self.notifier = AsyncRabbitMQNotifier(send_notifications=notify)
+        self.notifier = AsyncRabbitMQNotifier()
         self.uploader = CKANUploader()
 
     def check_node_availability(self) -> None:
@@ -58,13 +57,6 @@ class ODMProcessor:
             )
         except (NodeConnectionError, NodeResponseError) as e:
             raise ProcessingError(f"NodeODM server is not available: {e}")
-
-    def _load_request_metadata(self, request_path: Path) -> ProcessingRequest:
-        try:
-            request = ProcessingRequest.from_file(request_path / "request.json")
-            return request
-        except Exception as e:
-            raise ProcessingError(f"Invalid request metadata: {e}")
 
     async def _get_task_info_async(self, task: Task) -> TaskInfo:
         return await asyncio.to_thread(task.info)
@@ -97,68 +89,68 @@ class ODMProcessor:
             existing_tasks[task_info.name] = task
         return existing_tasks
 
-    async def _create_tasks(self, datatype_groups: list[tuple], request: ProcessingRequest) -> list[Task]:
-        odm_tasks = []
-        # First, retrieve existing tasks so that we do not restart an existing one
+    async def _create_task(self, images: list[Path], request: ProcessingRequest) -> list[Task]:
+        # create tasks and return them
+        active_tasks = []
         try:
             existing_tasks = await self._get_existing_tasks()
         except (NodeConnectionError, NodeResponseError) as e:
             log.error("Failed to retrieve the list of tasks", error=str(e))
             raise ProcessingError("Failed to retrieve the list of tasks")
 
-        for datatype_id, _, images in datatype_groups:
-            # Check for shutdown during task creation
-            if self._shutdown_event.is_set():
-                log.info("Shutdown requested during task creation")
-                raise ProcessingCancelledError("Task creation cancelled")
+        # check for shutdown during task creation
+        if self._shutdown_event.is_set():
+            log.info("Shutdown requested during task creation")
+            raise ProcessingCancelledError("Task creation cancelled")
 
-            task_name = f"{request.request_id}_{DataType(datatype_id).name}"
-            log.info("Processing task", datatype_id=datatype_id, image_count=len(images), task_name=task_name)
+        task_name = f"{request.request_id}_{'-'.join([DataType(d).name for d in request.datatype_ids])}"
+        is_multiband = len(request.datatype_ids) > 1 or request.datatype_ids[0] == DataType.thermal
+        datatypes = {d: DataType(d).name for d in request.datatype_ids}
+        log.debug("Creating task: ", task_name=task_name, images=len(images), multiband=is_multiband)
 
-            if task_name in existing_tasks:
-                log.info(f"Task '{task_name}' already created, tracking...", task_name=task_name)
-                old_task = existing_tasks[task_name]
-                odm_tasks.append(old_task)
-                tracker = TaskTracker(
-                    pyodm_task_id=old_task.uuid,
-                    request_id=request.request_id,
-                    datatype_id=datatype_id,
-                    datatype_name=DataType(datatype_id).name,
-                )
-                self.active_tasks[old_task.uuid] = tracker
-                continue
-
+        # case 1: the same task already exists, keep tracking it
+        if task_name in existing_tasks:
+            log.info(f"Task '{task_name}' already created, tracking...", task_name=task_name)
+            old_task = existing_tasks[task_name]
+            active_tasks.append(old_task)
+            tracker = TaskTracker(
+                pyodm_task_id=old_task.uuid,
+                request_id=request.request_id,
+                datatypes=datatypes,
+            )
+            self.active_tasks[old_task.uuid] = tracker
+        # case 2: the task does not exist, create a new one
+        else:
             try:
                 # Convert image paths to list of strings for PyODM
                 image_paths = [str(img) for img in images]
                 task = await self._create_task_async(
                     files=image_paths,
-                    options=self.odm_options.to_pyodm_options(),
+                    options=settings.nodeodm.options.to_pyodm_options(),
                     name=task_name,
                 )
                 task_tracker = TaskTracker(
                     pyodm_task_id=task.uuid,
                     request_id=request.request_id,
-                    datatype_id=datatype_id,
-                    datatype_name=DataType(datatype_id).name,
+                    datatypes=datatypes,
                 )
                 self.active_tasks[task.uuid] = task_tracker
-                odm_tasks.append(task)
-                log.info("PyODM task created", task_id=task.uuid, datatype_name=task_tracker.datatype_name)
+                log.info("PyODM task created", task_id=task.uuid, datatypes=task_tracker.datatypes)
+                active_tasks.append(task)
 
                 # notify creation
-                await self.notifier.send_task_start(request_id=request.request_id, datatype_id=datatype_id)
+                await self.notifier.send_task_start(request_id=request.request_id, datatype_ids=request.datatype_ids)
 
             except (NodeConnectionError, NodeResponseError) as e:
-                log.error("Failed to create PyODM task", datatype_id=datatype_id, error=str(e))
-                raise ProcessingError(f"Failed to create task for datatype {datatype_id}: {e}")
-        return odm_tasks
+                log.error("Failed to create PyODM task", datatypes=datatypes, error=str(e))
+                raise ProcessingError(f"Failed to create task for {request.request_id} - {datatypes}: {e}")
+        return active_tasks
 
     async def _process_results(self, request: ProcessingRequest, task: Task, task_info: TaskInfo):
-        file_manager = FileManager(request.path.parent)  # request path points to the json
+        file_manager = FileManager(request.path)  # request path points to the json
         task_tracker = self.active_tasks[task_info.uuid]
         # Create output directory
-        output_dir = file_manager.get_output_directory(task_tracker.datatype_id)
+        output_dir = file_manager.get_output_directory()
         log.info("Downloading task results", task_id=task.uuid, output_dir=str(output_dir))
 
         # Make download cancellable
@@ -173,30 +165,35 @@ class ODMProcessor:
             log.error(
                 "Missing result files",
                 request_id=request.request_id,
-                datatype=task_tracker.datatype_name,
+                datatypes=task_tracker.datatypes,
             )
             raise ProcessingError("Missing result files")
         try:
             assert all(p.exists() for p in result_files.values())
-            datasets = self.uploader.upload_results(
-                request=request,
-                datatype_id=task_tracker.datatype_id,
-                results=result_files,
-            )
-            return datasets
+            # TODO: implement datatype-wise upload
+            # datasets = self.uploader.upload_results(
+            #     request=request,
+            #     datatypes=task_tracker.datatypes,
+            #     results=result_files,
+            # )
+            # return datasets
+            return None
         except Exception as e:
             log.error("CKAN upload failed", task_id=task.uuid, error=str(e))
             await self.notifier.send_task_error(
                 request_id=request.request_id,
-                datatype_id=task_tracker.datatype_id,
+                datatype_ids=list(task_tracker.datatypes.keys()),
                 message="Data upload failed",
             )
 
-    async def list_tasks(self, request_path: Path | None, statuses: list[TaskStatus] | None = None) -> list[TaskInfo]:
+    async def list_tasks(
+        self,
+        request: ProcessingRequest | None,
+        statuses: list[TaskStatus] | None = None,
+    ) -> list[TaskInfo]:
         request = None
         tasks = await self._get_existing_tasks(statuses=statuses)
-        if request_path is not None:
-            request = self._load_request_metadata(request_path)
+        if request is not None:
             filtered_tasks = []
             for task_name, task in tasks.items():
                 task_request = task_name.split("_", 1)[0]
@@ -239,7 +236,7 @@ class ODMProcessor:
                             tracker = self.active_tasks[task.uuid]
                             await self.notifier.send_task_end(
                                 request_id=tracker.request_id,
-                                datatype_id=tracker.datatype_id,
+                                datatype_ids=list(tracker.datatypes.keys()),
                                 message="Task cancelled by user",
                             )
                     else:
@@ -253,23 +250,22 @@ class ODMProcessor:
             except Exception as e:
                 log.error("Error during task cancellation", task_id=task.uuid, error=str(e))
 
-    async def process_request(self, request_path: Path, data_path: Path | None = None) -> None:
-        data_path = data_path or request_path
-        request = self._load_request_metadata(request_path)
+    async def process_request(self, request: ProcessingRequest, data_path: Path | None = None) -> None:
+        data_path = data_path or request.path
         log.info(
             "Processing request",
             request_id=request.request_id,
             data_path=data_path,
             datatype_ids=request.datatype_ids,
-            options=self.odm_options.model_dump(),
+            options=settings.nodeodm.options.model_dump(),
         )
 
-        # Find datatype directories and validate images
+        # Find image dir(s) and validate images
         async with self.notifier:
             try:
-                file_manager = FileManager(request_path=data_path)
-                datatype_groups = file_manager.validate_datatype_groups(request.datatype_ids)
-                odm_tasks = await self._create_tasks(datatype_groups=datatype_groups, request=request)
+                file_manager = FileManager(root_dir=data_path)
+                task_imgs = file_manager.validate_datatype_groups(request.datatype_ids)
+                odm_tasks = await self._create_task(task_imgs, request=request)
 
                 if not odm_tasks:
                     raise ProcessingError("No tasks were created")
@@ -292,7 +288,7 @@ class ODMProcessor:
                     await self._cancel_odm_tasks(odm_tasks)  # type: ignore
                 raise
 
-    async def monitor_tasks(self, tasks: list, request: ProcessingRequest) -> None:
+    async def monitor_tasks(self, tasks: list[Task], request: ProcessingRequest) -> None:
         log.info("Starting task monitoring", task_count=len(tasks))
         completed_count = 0
         total_tasks = len(tasks)
@@ -320,7 +316,7 @@ class ODMProcessor:
                     log.info(
                         "Task status update",
                         task_id=task.uuid,
-                        datatype=task_tracker.datatype_name,
+                        datatypes=task_tracker.datatypes,
                         status=task_info.status.name,
                         progress=task_info.progress,
                         total_tasks=total_tasks,
@@ -331,7 +327,7 @@ class ODMProcessor:
                     if task_info.status == TaskStatus.RUNNING:
                         await self.notifier.send_task_update(
                             request_id=request.request_id,
-                            datatype_id=task_tracker.datatype_id,
+                            datatype_ids=list(task_tracker.datatypes.keys()),
                             message=f"Processing in progress - {task_info.progress}% complete",
                         )
                     elif task_info.status == TaskStatus.FAILED:
@@ -347,7 +343,7 @@ class ODMProcessor:
                     elif task_info.status == TaskStatus.CANCELED:
                         await self.notifier.send_task_end(
                             request_id=request.request_id,
-                            datatype_id=task_tracker.datatype_id,
+                            datatype_ids=list(task_tracker.datatypes.keys()),
                             message="ODM Task cancelled",
                         )
                         completed_count += 1
@@ -355,7 +351,7 @@ class ODMProcessor:
                         # send something, just to feel alive
                         await self.notifier.send_task_update(
                             request_id=request.request_id,
-                            datatype_id=task_tracker.datatype_id,
+                            datatype_ids=list(task_tracker.datatypes.keys()),
                             message=f"ODM Task status: {task_info.status}",
                         )
 
@@ -401,21 +397,21 @@ class ODMProcessor:
                         )
                         await self.notifier.send_task_end(
                             request_id=request.request_id,
-                            datatype_id=task_tracker.datatype_id,
+                            datatype_ids=list(task_tracker.datatypes.keys()),
                         )
                     else:
                         failed_tasks += 1
                         log.error("Upload failed", task_id=task.uuid, request=request.request_id)
                         await self.notifier.send_task_error(
                             request_id=request.request_id,
-                            datatype_id=task_tracker.datatype_id,
+                            datatype_ids=list(task_tracker.datatypes.keys()),
                             message="Upload failed",
                         )
 
                 elif task_info.status == TaskStatus.FAILED:
                     await self.notifier.send_task_error(
                         request_id=request.request_id,
-                        datatype_id=task_tracker.datatype_id,
+                        datatype_ids=list(task_tracker.datatypes.keys()),
                         message="ODM Task failed",
                     )
                     log.error("Task failed, cannot download results", task_id=task.uuid, error=task_info.last_error)
@@ -429,14 +425,11 @@ class ODMProcessor:
 
     async def clear_tasks(
         self,
-        request_path: Path | None,
+        request: ProcessingRequest | None,
         statuses: Iterable[TaskStatus] | None = None,
         dry_run: bool = False,
     ) -> list[str]:
         request = None
-        if request_path is not None:
-            request = self._load_request_metadata(request_path)
-
         tasks = await self._get_existing_tasks(statuses=statuses)
         removed = []
 

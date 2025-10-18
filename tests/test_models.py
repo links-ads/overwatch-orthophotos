@@ -23,7 +23,7 @@ class TestProcessingRequest:
 
     def test_valid_request_creation(self, valid_request_data):
         """Test creating ProcessingRequest with valid data."""
-        request = ProcessingRequest(**valid_request_data, path=Path("/test/path"))
+        request = ProcessingRequest(**valid_request_data, file_path=Path("/test/path"))
 
         assert request.request_id == "test-request-123"
         assert request.situation_id == "test-situation-456"
@@ -33,7 +33,7 @@ class TestProcessingRequest:
 
     def test_geojson_pydantic_feature_compatibility(self, valid_request_data):
         """Test that geojson_pydantic Feature works correctly."""
-        request = ProcessingRequest(**valid_request_data, path=Path("/test/path"))
+        request = ProcessingRequest(**valid_request_data, file_path=Path("/test/path"))
 
         # Verify Feature structure
         assert hasattr(request.feature, "geometry")
@@ -42,14 +42,14 @@ class TestProcessingRequest:
 
     def test_multipolygon_geometry(self, valid_multipolygon_data):
         """Test ProcessingRequest with MultiPolygon geometry."""
-        request = ProcessingRequest(**valid_multipolygon_data, path=Path("/test/path"))
+        request = ProcessingRequest(**valid_multipolygon_data, file_path=Path("/test/path"))
 
         assert request.feature.geometry.type == "MultiPolygon"
         assert len(request.feature.geometry.coordinates) == 2
 
     def test_alias_handling(self, valid_request_data):
         """Test that camelCase aliases are properly converted to snake_case."""
-        request = ProcessingRequest(**valid_request_data, path=Path("/test/path"))
+        request = ProcessingRequest(**valid_request_data, file_path=Path("/test/path"))
 
         # Should accept requestId and convert to request_id
         assert request.request_id == "test-request-123"
@@ -63,7 +63,7 @@ class TestProcessingRequest:
         data_with_extra = valid_request_data.copy()
         data_with_extra["extraField"] = "should be ignored"
 
-        request = ProcessingRequest(**data_with_extra, path=Path("/test/path"))
+        request = ProcessingRequest(**data_with_extra, file_path=Path("/test/path"))
 
         assert not hasattr(request, "extraField")
         assert not hasattr(request, "extra_field")
@@ -78,11 +78,11 @@ class TestProcessingRequest:
         request = ProcessingRequest.from_file(request_file)
 
         assert request.request_id == "test-request-123"
-        assert request.path == request_file
+        assert request.file_path == request_file
 
     def test_datetime_parsing(self, valid_request_data):
         """Test that datetime fields are properly parsed."""
-        request = ProcessingRequest(**valid_request_data, path=Path("/test/path"))
+        request = ProcessingRequest(**valid_request_data, file_path=Path("/test/path"))
 
         assert isinstance(request.start, datetime)
         assert isinstance(request.end, datetime)
@@ -95,7 +95,7 @@ class TestProcessingRequest:
         }
 
         with pytest.raises(Exception):  # Pydantic will raise ValidationError
-            ProcessingRequest(**incomplete_data, path=Path("/test/path"))
+            ProcessingRequest(**incomplete_data, file_path=Path("/test/path"))
 
     def test_invalid_geometry_type(self, valid_request_data):
         """Test that invalid geometry type raises validation error."""
@@ -106,7 +106,7 @@ class TestProcessingRequest:
         # This should either work (if Point is accepted) or raise an error
         # Adjust based on your actual requirements
         with pytest.raises(Exception):
-            ProcessingRequest(**invalid_data, path=Path("/test/path"))
+            ProcessingRequest(**invalid_data, file_path=Path("/test/path"))
 
 
 class TestDataType:

@@ -25,8 +25,7 @@ class TaskStatus(str, Enum):
 class TaskTracker(BaseModel):
     pyodm_task_id: str
     request_id: str
-    datatype_id: int
-    datatype_name: str
+    datatypes: dict[int, str]
     created_at: datetime = Field(default_factory=datetime.now)
     output_path: Path | None = None
 
@@ -40,13 +39,17 @@ class ProcessingRequest(BaseModel):
     situation_id: str = Field(alias="situationId")
     datatype_ids: list[int] = Field(alias="datatypeIds")
     feature: Feature
-    path: Path
+    file_path: Path
 
     @classmethod
     def from_file(cls, path: Path) -> "ProcessingRequest":
         with open(path) as f:
             data = json.load(f)
-        return cls(**data, path=path)
+        return cls(**data, file_path=path)
+
+    @property
+    def path(self) -> Path:
+        return self.file_path.parent
 
 
 class ODMTask(BaseModel):

@@ -14,12 +14,12 @@ class FileManager:
     It is bound to the single request.
     """
 
-    def __init__(self, request_path: Path) -> None:
-        self.request_path = request_path
+    def __init__(self, root_dir: Path) -> None:
+        self.root_dir = root_dir
 
     def find_datatype_images(self, datatype_id: int) -> list[Path]:
         """
-        Find images for a specific datatype.
+        Find images for a specific datatype, based on suffix.
 
         Args:
             datatype_id: ID of the specific datatype (depends on the mapping form)
@@ -27,13 +27,13 @@ class FileManager:
         Returns:
             list of images beloning to this request and the given datatype
         """
-        datatype_path = self.request_path / DataType(datatype_id).name
-        if not datatype_path.exists():
-            log.warning("Missing datatype", datatype_id=datatype_id)
-            return []
-        return find_images(datatype_path)
+        return find_images(
+            root_path=self.root_dir,
+            suffix=f"_{str(DataType(datatype_id).name).upper()}",
+            extension=".jpg",
+        )
 
-    def get_output_directory(self, datatype_id: int) -> Path:
+    def get_output_directory(self) -> Path:
         """
         Get the output directory for the given datatype.
 
@@ -43,7 +43,7 @@ class FileManager:
         Returns:
             Path where to save outputs for the given datatype.
         """
-        output_dir = self.request_path / "outputs" / DataType(datatype_id).name
+        output_dir = self.root_dir / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
@@ -60,20 +60,20 @@ class FileManager:
 
         return result_files
 
-    def validate_datatype_groups(self, datatype_ids: list[int]) -> list[tuple[str, Path, list[Path]]]:
+    def validate_datatype_groups(self, datatype_ids: list[int]) -> list[Path]:
         """Validate and return valid datatype groups."""
-        datatype_groups = []
+        all_images = []
 
         for datatype_id in datatype_ids:
             images = self.find_datatype_images(datatype_id)
             if images:
-                datatype_path = self.request_path / DataType(datatype_id).name
-                datatype_groups.append((datatype_id, datatype_path, images))
+                log.debug("Found %d images for datatype %d", len(images), datatype_id)
+                all_images.extend(images)
             else:
                 log.warning(
                     "No images found for datatype",
                     datatype_id=datatype_id,
-                    path=str(self.request_path / DataType(datatype_id).name),
+                    path=str(self.root_dir),
                 )
 
-        return datatype_groups
+        return all_images

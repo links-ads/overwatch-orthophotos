@@ -10,7 +10,7 @@ import exif
 import structlog
 from shapely.geometry import Point, shape
 
-from odm_tools.models import ProcessingRequest
+from odm_tools.models import DataType, ProcessingRequest
 
 log = structlog.get_logger()
 
@@ -23,8 +23,6 @@ class PreprocessingManager:
         self.request = request
         self.framerate_factor = framerate_factor
         self.processed_path = request_path / "processed"
-
-        # Extract geometry from request
         self.geometry = shape(request.feature.__geo_interface__)
 
     def is_preprocessing_needed(self, force: bool = False) -> bool:
@@ -33,77 +31,53 @@ class PreprocessingManager:
             log.debug("Preprocessing forced: deleting any previous data")
             self.processed_path.unlink(missing_ok=True)
             return True
-
-        # Check if processed/ exists and is complete
+        # check if processed/ exists and is complete
         if not self.processed_path.exists():
             return True
-
-        # Validate completeness (check for marker file)
+        # validate completeness (check for marker file)
         marker = self.processed_path / ".preprocessing_complete"
         return not marker.exists()
 
     def preprocess(self) -> Path:
-        """Run the full preprocessing pipeline."""
         log.info("Starting preprocessing", request_id=self.request.request_id)
-
-        # Create processed directory structure
+        # create processed directory structure
         self.processed_path.mkdir(exist_ok=True)
+        # find RGB and thermal, match them in tuples
+        rgb_images = self._find_images(self.request.path / "rgb")
+        trm_images = self._find_images(self.request.path / "thermal")
+        # infinite checks
+        if not rgb_images:
+            raise ValueError("No RGB images found, cannot proceed")
+        if not trm_images and DataType.thermal.value in self.request.datatype_ids:
+            raise ValueError("User requested thermal imagery, but could not find any, aborting.")
+        if len(rgb_images) != len(trm_images):
+            raise ValueError(f"Length mismatch: {len(rgb_images)} (RGB), {len(trm_images)} (Thermal)")
 
-        # Process each datatype
-        for datatype_id in self.request.datatype_ids:
-            datatype_name = self._get_datatype_name(datatype_id)
-            source_dir = self.request_path / datatype_name
-            dest_dir = self.processed_path / datatype_name
-
-            if not source_dir.exists():
-                log.warning("Datatype directory not found, skipping", datatype=datatype_name)
-                continue
-
-            log.info("Processing datatype", datatype=datatype_name)
-            processed_count = self._process_datatype(source_dir, dest_dir)
-
-            log.info("Datatype processing complete", datatype=datatype_name, images_processed=processed_count)
-
-        # Write completion marker
-        (self.processed_path / ".preprocessing_complete").touch()
-
-        log.info("Preprocessing complete", output_path=str(self.processed_path))
-        return self.processed_path
-
-    def _process_datatype(self, source_dir: Path, dest_dir: Path) -> int:
-        """Process a single datatype directory."""
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        # Find all images
-        images = self._find_images(source_dir)
-        log.info("Found images", count=len(images), source=str(source_dir))
-
-        # Step 1: Validate and filter by geometry
-        valid_images = []
-        for img_path in images:
+        # step 1: validate and filter by geometry
+        valid_tuples: list[tuple[int, Path, Path]] = []
+        log.info("Filtering by area...")
+        for i, (rgb, trm) in enumerate(zip(rgb_images, trm_images)):
             try:
-                coords = self._extract_gps_coords(img_path)
+                assert rgb.name == trm.name, f"Name mismatch {rgb} <-> {trm}"
+                coords = self._extract_gps_coords(rgb)
                 if coords and self._is_within_geometry(coords):
-                    valid_images.append(img_path)
+                    valid_tuples.append((i, rgb, trm))
             except Exception as e:
-                log.warning("Skipping image", image=img_path.name, reason=str(e))
+                log.warning("Skipping image", image=rgb.name, reson=str(e))
 
-        log.info("Images after geo filtering", count=len(valid_images))
+        # step 2: framerate filtering and renaming
+        valid_tuples = valid_tuples[:: self.framerate_factor]
+        log.info("Images after framerate filtering", count=len(valid_tuples), factor=self.framerate_factor)
+        log.info("Renaming images...")
+        for i, rgb, trm in valid_tuples:
+            new_rgb_path = self.processed_path / f"{i:04d}_RGB{rgb.suffix}"
+            new_trm_path = self.processed_path / f"{i:04d}_THERMAL{trm.suffix}"
+            shutil.copy2(rgb, new_rgb_path)
+            shutil.copy2(trm, new_trm_path)
 
-        if not valid_images:
-            log.warning(f"No valid images found for {source_dir.name} after filtering")
-            return 0
-
-        # Step 2: Framerate filtering
-        selected_images = valid_images[:: self.framerate_factor]
-        log.info("Images after framerate filtering", count=len(selected_images), factor=self.framerate_factor)
-
-        # Step 3: Copy to destination
-        for img_path in selected_images:
-            dest_path = dest_dir / img_path.name
-            shutil.copy2(img_path, dest_path)
-
-        return len(selected_images)
+        log.info("Processing complete", images_processed=len(valid_tuples))
+        (self.processed_path / ".preprocessing_complete").touch()
+        return self.processed_path
 
     def _extract_gps_coords(self, image_path: Path) -> tuple[float, float] | None:
         """Extract GPS coordinates from image EXIF."""
@@ -140,12 +114,3 @@ class PreprocessingManager:
         image_extensions = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
         images = [f for f in directory.iterdir() if f.is_file() and f.suffix.lower() in image_extensions]
         return sorted(images)
-
-    def _get_datatype_name(self, datatype_id: int) -> str:
-        """Convert datatype ID to folder name."""
-        from odm_tools.models import DataType
-
-        for dt in DataType:
-            if dt.value == datatype_id:
-                return dt.name
-        raise ValueError(f"Unknown datatype ID: {datatype_id}")
