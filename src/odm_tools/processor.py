@@ -170,14 +170,8 @@ class ODMProcessor:
             raise ProcessingError("Missing result files")
         try:
             assert all(p.exists() for p in result_files.values())
-            # TODO: implement datatype-wise upload
-            # datasets = self.uploader.upload_results(
-            #     request=request,
-            #     datatypes=task_tracker.datatypes,
-            #     results=result_files,
-            # )
-            # return datasets
-            return None
+            datasets = self.uploader.upload_results(request=request, results=result_files)
+            return datasets
         except Exception as e:
             log.error("CKAN upload failed", task_id=task.uuid, error=str(e))
             await self.notifier.send_task_error(
@@ -185,6 +179,13 @@ class ODMProcessor:
                 datatype_ids=list(task_tracker.datatypes.keys()),
                 message="Data upload failed",
             )
+
+    async def _process_failure(self, request: ProcessingRequest, task: Task):
+        file_manager = FileManager(request.path)
+        out_dir = file_manager.get_output_directory()
+        with open((out_dir / "logs.txt"), "w") as f:
+            for line in task.output():
+                f.write(f"{line}\n")
 
     async def list_tasks(
         self,
@@ -264,7 +265,7 @@ class ODMProcessor:
         async with self.notifier:
             try:
                 file_manager = FileManager(root_dir=data_path)
-                task_imgs = file_manager.validate_datatype_groups(request.datatype_ids)
+                task_imgs = file_manager.gather_images_by_datatype(request.datatype_ids)
                 odm_tasks = await self._create_task(task_imgs, request=request)
 
                 if not odm_tasks:
@@ -393,7 +394,7 @@ class ODMProcessor:
                         log.info(
                             "Results uploaded",
                             task_id=task.uuid,
-                            datasets=len(upload_results),
+                            datasets=upload_results,
                         )
                         await self.notifier.send_task_end(
                             request_id=request.request_id,
@@ -409,6 +410,7 @@ class ODMProcessor:
                         )
 
                 elif task_info.status == TaskStatus.FAILED:
+                    await self._process_failure(request=request, task=task)
                     await self.notifier.send_task_error(
                         request_id=request.request_id,
                         datatype_ids=list(task_tracker.datatypes.keys()),

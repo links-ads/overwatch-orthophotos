@@ -27,7 +27,7 @@ class TestProcessingRequest:
 
         assert request.request_id == "test-request-123"
         assert request.situation_id == "test-situation-456"
-        assert request.datatype_ids == [22002, 22003]
+        assert request.datatype_ids == [22002, 22001]
         assert request.feature.type == "Feature"
         assert request.feature.geometry.type == "Polygon"
 
@@ -56,7 +56,7 @@ class TestProcessingRequest:
         # Should accept situationId and convert to situation_id
         assert request.situation_id == "test-situation-456"
         # Should accept datatypeIds and convert to datatype_ids
-        assert request.datatype_ids == [22002, 22003]
+        assert request.datatype_ids == [22002, 22001]
 
     def test_extra_fields_ignored(self, valid_request_data):
         """Test that extra fields are ignored due to ConfigDict(extra='ignore')."""
@@ -115,7 +115,7 @@ class TestDataType:
     def test_datatype_values(self):
         """Test that DataType enum has correct values."""
         assert DataType.rgb.value == 22002
-        assert DataType.thermal.value == 22003
+        assert DataType.thermal.value == 22001
 
     def test_datatype_names(self):
         """Test that DataType enum has correct names."""

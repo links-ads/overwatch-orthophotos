@@ -1,5 +1,4 @@
 import asyncio
-import os
 import ssl
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -23,9 +22,8 @@ class AsyncRabbitMQNotifier:
         self.channel: Channel | None = None
         self._connection_lock = asyncio.Lock()
         self._is_connected = False
-        self._notify = os.getenv("SUPPRESS_NOTIFICATIONS", True)
-        if not self._notify:
-            log.warning("Suppressing status message notifications")
+        if not self.cfg.active:
+            log.warning("Notifier turned off")
 
     async def connect(self) -> None:
         """Establish connection to RabbitMQ."""
@@ -129,10 +127,10 @@ class AsyncRabbitMQNotifier:
                     durable=True,
                     passive=True,
                 )
-                if self._notify:
+                if self.cfg.active:
                     await exchange.publish(message, routing_key=routing_key)
                 else:
-                    log.debug("Mocking notification")
+                    log.debug("Notifier not active, mocking notification")
 
                 log.debug(
                     "StatusUpdate published",

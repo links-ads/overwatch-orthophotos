@@ -239,11 +239,11 @@ def create_request_json(
         bag_name: Name of the bag (request ID)
         processed_data_dir: Path to processed data directory
         situation_id: Situation identifier (default: "none")
-        datatype_ids: List of datatype IDs (default: [22002, 22003])
+        datatype_ids: List of datatype IDs (default: [22002, 22001])
         bbox_coords: Bounding box coordinates as [min_lon, min_lat, max_lon, max_lat]
     """
     if datatype_ids is None:
-        datatype_ids = [22002, 22003]
+        datatype_ids = [22002, 22001]
 
     # Default coordinates if none provided
     if bbox_coords is None:

@@ -1,15 +1,13 @@
-"""
-Image preprocessing pipeline for ODM processing.
-Handles validation, spatial filtering, and framerate subsampling.
-"""
-
+import re
 import shutil
 from pathlib import Path
 
 import exif
+import pyexiv2
 import structlog
 from shapely.geometry import Point, shape
 
+from odm_tools.config import EXIF_TAGS_GPS, EXIF_TAGS_TRM
 from odm_tools.models import DataType, ProcessingRequest
 
 log = structlog.get_logger()
@@ -37,6 +35,29 @@ class PreprocessingManager:
         # validate completeness (check for marker file)
         marker = self.processed_path / ".preprocessing_complete"
         return not marker.exists()
+
+    def copy_exif_tags(self, rgb_path: Path, trm_path: Path):
+        """Copy GPS from RGB to thermal and set band name."""
+        # Read GPS from RGB
+        pyexiv2.registerNs("http://pix4d.com/camera/1.0/", "Camera")
+        additional_info = {}
+        with pyexiv2.Image(str(rgb_path)) as rgb_img:
+            rgb_exif = rgb_img.read_exif()
+            if comment := rgb_exif.get("Exif.Photo.UserComment"):
+                log.debug("Found gimbal info, writing as XMP")
+                additional_info.update(self._extract_gimbal_info(comment))
+                rgb_img.modify_xmp(additional_info)
+
+        # Write to thermal
+        with pyexiv2.Image(str(trm_path)) as trm_img:
+            # Copy GPS tags
+            gps_tags = {tag: rgb_exif[tag] for tag in EXIF_TAGS_GPS if tag in rgb_exif}
+            if gps_tags:
+                trm_img.modify_exif(gps_tags)
+            # Add band name (XMP)
+            additional_info.update(EXIF_TAGS_TRM)
+            trm_img.modify_xmp(additional_info)
+        log.debug("Copied EXIF/XMP tags", rgb=rgb_path.name, thermal=trm_path.name)
 
     def preprocess(self) -> Path:
         log.info("Starting preprocessing", request_id=self.request.request_id)
@@ -74,6 +95,7 @@ class PreprocessingManager:
             new_trm_path = self.processed_path / f"{i:04d}_THERMAL{trm.suffix}"
             shutil.copy2(rgb, new_rgb_path)
             shutil.copy2(trm, new_trm_path)
+            self.copy_exif_tags(new_rgb_path, new_trm_path)
 
         log.info("Processing complete", images_processed=len(valid_tuples))
         (self.processed_path / ".preprocessing_complete").touch()
@@ -95,6 +117,21 @@ class PreprocessingManager:
         except Exception as e:
             log.debug("Failed to extract GPS", image=image_path.name, error=str(e))
             return None
+
+    def _extract_gimbal_info(self, exif_comments: str) -> dict[str, str]:
+        # user comment in this broken format:
+        # charset=InvalidCharsetId i:GimbalRoll:-90.0,drone-dji:GimbalPitch:0.0,drone-dji:GimbalYaw:-90.0
+        pattern = r"GimbalRoll:(-?\d+\.?\d*).*?GimbalPitch:(-?\d+\.?\d*).*?GimbalYaw:(-?\d+\.?\d*)"
+        match = re.search(pattern, exif_comments)
+        if match is None:
+            log.warning("Could not find gimbal info in %s", exif_comments)
+            return {}
+        roll, pitch, yaw = match.groups()
+        return {
+            "Xmp.Camera.Roll": roll,
+            "Xmp.Camera.Pitch": pitch,
+            "Xmp.Camera.Yaw": yaw,
+        }
 
     def _convert_to_degrees(self, value: tuple, ref: str) -> float:
         """Convert GPS coordinates to decimal degrees."""

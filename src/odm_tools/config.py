@@ -3,6 +3,21 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
 
+# tags to copy from rgb to thermal
+EXIF_TAGS_GPS = [
+    "Exif.GPSInfo.GPSLatitude",
+    "Exif.GPSInfo.GPSLatitudeRef",
+    "Exif.GPSInfo.GPSLongitude",
+    "Exif.GPSInfo.GPSLongitudeRef",
+    "Exif.GPSInfo.GPSAltitude",
+    "Exif.GPSInfo.GPSAltitudeRef",
+]
+
+# tags to ADD to thermal images (not copied from RGB)
+EXIF_TAGS_TRM = {
+    "Xmp.Camera.BandName": "LWIR",
+}
+
 
 class OAuthSettings(BaseModel):
     url: str
@@ -40,6 +55,7 @@ class RabbitMQSettings(BaseModel):
     exchange: str = "amq.topic"
     routing_key_prefix: str = "request.status"
     retry_count: int = 3
+    active: bool = True
 
     @property
     def url(self) -> str:
@@ -62,7 +78,6 @@ class ODMProcessingOptions(BaseModel):
     ignore_gsd: bool = False
     ski_3d_model: bool = True
     skip_post_processing: bool = False
-    radiometric_calibration: str | None = None
 
     def to_pyodm_options(self) -> dict[str, Any]:
         options = {}
@@ -74,7 +89,6 @@ class ODMProcessingOptions(BaseModel):
         options["pc-quality"] = self.point_cloud_quality
         options["skip-post-processing"] = self.skip_post_processing
         options["ignore-gsd"] = self.ignore_gsd
-        options["radiometric-calibration"] = self.radiometric_calibration
         return options
 
 

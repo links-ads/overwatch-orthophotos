@@ -11,6 +11,7 @@ services:
       - ODM_PARALLEL_TASKS=2
     volumes:
       - nodeodm_data:/var/www/data
+    command: ["node", "index.js", "--log_level", "debug"]
     deploy:
       resources:
         limits:

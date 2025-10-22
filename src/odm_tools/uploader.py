@@ -9,6 +9,7 @@ from geojson_pydantic import MultiPolygon, Polygon
 from odm_tools.auth import KeyCloakAuthenticator
 from odm_tools.config import settings
 from odm_tools.models import (
+    DataType,
     MetadataINSPIRE,
     ProcessingRequest,
     ResourceCreateRequest,
@@ -240,30 +241,27 @@ class CKANUploader:
     def upload_results(
         self,
         request: ProcessingRequest,
-        datatypes: dict[int, str],
-        results: dict[str, Path],
+        results: dict[DataType, Path],
         package_title: str | None = None,
     ) -> list[dict[str, str]]:
         if not results:
             raise UploadError("Request failed: no data to upload to datalake")
 
-        # Creating package title and resource name if not provided
-        if not package_title:
-            log.info("Generating package title...")
-            package_title = f"Drone mission - situation: {request.situation_id}, request: {request.request_id}"
-
-        log.info(f"Using package with name {package_title}")
         datasets = []
 
-        for resource_name, resource_path in results.items():
+        for datatype, resource_path in results.items():
             # Creating new package metadata
+            package_title = (
+                f"Drone mission - situation: {request.situation_id}, request: {request.request_id} ({datatype.name})"
+            )
+            log.info(f"Creating package: {package_title}")
             dataset_metadata = self._create_metadata(
                 package_title=package_title,
                 package_owner=self.cfg.owner_org,
                 package_keywords=self.cfg.data.keywords,
                 package_topic=self.cfg.data.topic,
                 image_resolution=self.cfg.data.resolution,
-                request_geometry=request.feature.geometry,  # type: ignore
+                request_geometry=request.feature,  # type: ignore
                 start_date=request.start,
                 end_date=request.end,
                 request_code=request.request_id,
@@ -276,18 +274,15 @@ class CKANUploader:
             log.info(f"Uploading metadata for package {package_title}...")
             package_id = self._upload_metadata(dataset_metadata)
 
-            for datatype_id, datatype_name in datatypes.items():
-                log.info(f"Updating resource to package {package_id}...")
-                url = [
-                    self._upload_resource(
-                        package_id=package_id,
-                        resource_path=resource_path,
-                        resource_name=resource_path.name,
-                        datatype_id=datatype_id,
-                        time_start=request.start,
-                        time_end=request.end,
-                    )
-                ]
-                log.info("Resource uploaded", url=url)
-                datasets.append(dict(dataset_id=package_id, url=url))
+            log.info(f"Updating resource to package {package_id}...")
+            url = self._upload_resource(
+                package_id=package_id,
+                resource_path=resource_path,
+                resource_name=resource_path.name,
+                datatype_id=datatype.value,
+                time_start=request.start,
+                time_end=request.end,
+            )
+            log.info("Resource uploaded", url=url)
+            datasets.append(dict(dataset_id=package_id, url=url))
         return datasets

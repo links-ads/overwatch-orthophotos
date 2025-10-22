@@ -79,7 +79,10 @@ def validate_request_structure(request_path: Path) -> None:
     if not request_path.is_dir():
         raise ValueError(f"Path '{request_path}' is not a valid directory")
     # Check for request.json
-    request_file = request_path / "request.json"
+    request_files = list(request_path.glob("*.json"))
+    if not request_files:
+        raise ValueError(f"No json files found in {request_path}")
+    request_file = request_files[0]
     if not request_file.exists():
         raise ValueError(f"request.json file missing in '{request_path}'")
     # Check for at least one datatype directory

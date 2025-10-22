@@ -4,14 +4,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal
 
-from geojson_pydantic import Feature, MultiPolygon, Polygon
+from geojson_pydantic import MultiPolygon, Polygon
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
 class DataType(Enum):
     rgb = 22002
-    thermal = 22003
+    thermal = 22001
 
 
 class TaskStatus(str, Enum):
@@ -38,7 +38,7 @@ class ProcessingRequest(BaseModel):
     request_id: str = Field(alias="requestId")
     situation_id: str = Field(alias="situationId")
     datatype_ids: list[int] = Field(alias="datatypeIds")
-    feature: Feature
+    feature: Polygon
     file_path: Path
 
     @classmethod

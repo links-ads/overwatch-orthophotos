@@ -41,7 +41,12 @@ class ProcessingService:
         self.processor = ODMProcessor()
 
     def load_request_data(self, path: Path) -> ProcessingRequest:
-        return ProcessingRequest.from_file(path / "request.json")
+        json_files = list(path.glob("*.json"))
+        if not json_files:
+            raise ValueError("Missing request JSON file")
+        if len(json_files) > 1:
+            raise ValueError(f"Found multiple JSON files: {json_files}")
+        return ProcessingRequest.from_file(json_files[0])
 
     async def handle_request(
         self,

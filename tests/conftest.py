@@ -61,7 +61,7 @@ def valid_request_data():
         "situationId": "test-situation-456",
         "start": "2024-10-01T10:00:00Z",
         "end": "2024-10-01T12:00:00Z",
-        "datatypeIds": [22002, 22003],
+        "datatypeIds": [22002, 22001],
         "feature": {
             "type": "Feature",
             "properties": {},
