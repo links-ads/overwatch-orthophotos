@@ -5,6 +5,7 @@ rmq:
   username: "user" # provided by ENG
   password: "pass" # provided by ENG
   ssl: true
+  active: true
 ckan:
   url: "https://ckan.terra-sense.eu"
   owner_org: "engineering" # keep this as is
@@ -21,8 +22,14 @@ ckan:
 nodeodm:
   host: "nodeodm"
   port: 3000
-  token: "tbd" # not set at the moment
+  token: "none" # not set at the moment
   poll_interval: 10 # in seconds
+  # option for ODM, see https://docs.opendronemap.org/arguments/fast-orthophoto/
   options:
+    dsm: false
+    dtm: false
     resolution: 25 # in centimeters
-    fast_orthophoto: true # see other options in odm_tools.config
+    fast_orthophoto: true # skips unnecessary parts (e.g., 3D model)
+    matcher_neighbors: 0 # 0 = match by triangulation
+    skip_3d_model: true # redundant with fast_orthophoto, but you never know
+

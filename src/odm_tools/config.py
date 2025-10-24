@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -67,28 +68,25 @@ class ODMProcessingOptions(BaseModel):
     dtm: bool = False
     # resolution in cm/pixel
     resolution: int | None = 10
-    texture_size: int = 2048
     # skip dense reconstruction
     fast_orthophoto: bool = False
     # reduce matching (good or 100s of images)
     matcher_neighbors: int = 8
     # balance between speed and quality
     feature_quality: str = "medium"
-    point_cloud_quality: str = "medium"
-    ignore_gsd: bool = False
-    ski_3d_model: bool = True
-    skip_post_processing: bool = False
+    skip_3d_model: bool = True
+    gcp: Path | None = None
 
     def to_pyodm_options(self) -> dict[str, Any]:
         options = {}
+        options["dsm"] = self.dsm
+        options["dtm"] = self.dtm
         options["orthophoto-resolution"] = self.resolution
         options["fast-orthophoto"] = self.fast_orthophoto
-        options["skip-3dmodel"] = self.ski_3d_model
+        options["skip-3dmodel"] = self.skip_3d_model
         options["matcher-neighbors"] = self.matcher_neighbors
         options["feature-quality"] = self.feature_quality
-        options["pc-quality"] = self.point_cloud_quality
-        options["skip-post-processing"] = self.skip_post_processing
-        options["ignore-gsd"] = self.ignore_gsd
+        options["gcp"] = self.gcp
         return options
 
 
